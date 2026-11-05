@@ -1,0 +1,11 @@
+fastmcp==4.1.6
+httpx
+cryptography
+py-key-value-aio[disk]
+pyyaml
+markdown-it-py
+mdit-py-plugins
+nh3
+tzdata   # Europe/Berlin times in the history (the slim image has no zoneinfo)
+certifi>=2026.10.19   # GHSA-6q48-6c7w-9gw2 (Trivy, 2026-10-21)
+fastembed==0.9.1   # section embeddings on ONNX Runtime, no PyTorch (app/embed.py); the version measured on 2026-11-04
