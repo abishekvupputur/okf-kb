@@ -40,6 +40,7 @@ ABSTAIN_SIM = 0.43     # abstain when the best section is below this by meaning 
 ABSTAIN_COV = 0.6      # ... and no page holds this share of the question's term weight (idf)
 SEM_LOW, SEM_FULL = 0.30, 0.65   # meaning similarity mapped onto 0..1 to rank it next to keyword coverage
 PAGE_SHARE = 0.35      # one page's share of the budget at most (at least 900 characters)
+RERANK_TOP = 12        # kb_context: how many of the best candidate pages the reranker (KB_RERANKER) re-orders
 
 PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 DEFAULT_AUTHOR = "claude/kb-mcp"
@@ -326,6 +327,18 @@ def register(mcp: FastMCP) -> None:
                 rank[n] = max(rank.get(n, 0), g)
             frontier = nxt
         order = sorted(rank, key=lambda c: -rank[c])
+        # Second stage: a cross-encoder reads the question together with each top candidate's best
+        # section (the one meaning found, else the best keyword section, else the lead) and re-orders them.
+        if embed.RERANKER and len(order) > 1:
+            def passage(c):
+                meta, body = by_id[c]
+                secs = dict(embed.sections(c, meta, body))
+                kw = search.section_scores(body, okf.sections(body), terms, weights)
+                heading = sem_heading.get(c) or (kw[0][1]["heading"] if kw else "")
+                return (secs.get(heading) or secs.get(""))[:1500]
+            top = order[:RERANK_TOP]
+            if scores := await _run(embed.rerank, question, [passage(c) for c in top]):
+                order = [c for _, c in sorted(zip(scores, top), key=lambda x: -x[0])] + order[RERANK_TOP:]
         pages, more, left = [], [], budget_chars
         page_cap = max(budget_chars * PAGE_SHARE, 900)   # no page may crowd out the rest
         for c in order:

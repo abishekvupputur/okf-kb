@@ -21,7 +21,6 @@ import os
 import re
 import ctypes
 import threading
-from pathlib import Path
 
 import numpy as np
 
@@ -31,6 +30,7 @@ MODEL = "Qdrant/stella-en-400M-v5-doc-onnx"   # MIT; one model for questions and
 DIM = 1024
 QUERY_PREFIX = "Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
 THREADS = int(os.environ.get("KB_EMBED_THREADS", "1"))
+RERANKER = os.environ.get("KB_RERANKER", "")   # a FastEmbed cross-encoder for kb_context; empty: off
 MODEL_DIR = os.environ.get("KB_MODELS", "/srv/models")   # baked into the image (Dockerfile)
 INDEX_DIR = DATA / "embeddings"
 CUT = int(os.environ.get("KB_EMBED_CUT", "1000"))
@@ -42,7 +42,9 @@ log = logging.getLogger("kb.embed")
 _lock = threading.Lock()          # one embedding job at a time (model + index files)
 _model = None
 _failed = False
-_index: dict[str, dict] = {}      # user dir -> {"keys": [...], "vecs": ndarray, "labels": [(cid, heading)]}
+_index: dict[str, dict] = {}
+_reranker = None
+_rerank_lock = threading.Lock()      # user dir -> {"keys": [...], "vecs": ndarray, "labels": [(cid, heading)]}
 
 
 def _load_model():
@@ -61,6 +63,23 @@ def _load_model():
 
 def available() -> bool:
     return _load_model() is not None
+
+
+def rerank(query: str, passages: list[str]) -> list[float] | None:
+    """Cross-encoder scores of (query, passage), or None when no reranker is configured or it fails
+    (callers keep their own order then)."""
+    global _reranker
+    if not RERANKER or not passages:
+        return None
+    try:
+        with _rerank_lock:
+            if _reranker is None:
+                from fastembed.rerank.cross_encoder import TextCrossEncoder
+                _reranker = TextCrossEncoder(RERANKER, cache_dir=MODEL_DIR, threads=THREADS)
+            return [float(s) for s in _reranker.rerank(query, passages, batch_size=8)]
+    except Exception as e:
+        log.error("reranker %s unavailable, keeping the first-stage order: %s", RERANKER, e)
+        return None
 
 
 def sections(cid: str, meta: dict, body: str, cut: int | None = CUT) -> list[tuple[str, str]]:
