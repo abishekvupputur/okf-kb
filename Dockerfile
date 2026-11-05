@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # The embedding model (app/embed.py) is downloaded here, at build time, so the running kb never
 # fetches anything; HF_HUB_OFFLINE makes sure of that. One ONNX thread (also set in embed.py).
 ENV KB_MODELS=/srv/models HF_HUB_OFFLINE=0 OMP_NUM_THREADS=1
-RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/srv/models')" \
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('Qdrant/stella-en-400M-v5-doc-onnx', cache_dir='/srv/models')" \
  && chmod -R a+rX /srv/models
 ENV HF_HUB_OFFLINE=1
 COPY app ./app

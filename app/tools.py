@@ -22,11 +22,18 @@ from . import embed, graph, guard, okf, search, store
 from .store import Bundle, User
 
 # Exact facts (search, identifiers, old values) are found by keywords; embeddings (embed.py) only
-# add what is related by meaning. Cosine thresholds for bge-small-en-v1.5, calibrated on this kb
-# (bge-small-en-v1.5, measured on a real bundle of ~150 pages).
-SEED_MIN = 0.60        # kb_context: a page this close to the question becomes a starting page
-TOPIC_MIN = 0.80       # after an edit or ingest: a section elsewhere about the same thing
-DUPLICATE_MIN = 0.93   # kb_write: an existing page may already cover the new one (true duplicate 0.97, related pages ~0.88)
+# add what is related by meaning. Cosine thresholds for the model in embed.py. They were set for
+# bge-small-en-v1.5 on a real bundle (exact copy 0.97, reworded duplicate 0.84, related pages ~0.80-0.89,
+# a short claim ~0.70-0.76 against the section stating it) and carried over to each later model by
+# quantile: the same share of section pairs (or question->section scores for SEED_MIN) lies above them.
+# Current values: stella-en-400M-v5, mapped 2026-11-05 from bge-small's 0.60 / 0.65 / 0.70 / 0.75 / 0.80 / 0.93
+# on 549 sections (298,068 pairs) and the 40 benchmark questions.
+SEED_MIN = 0.37        # kb_context: a page this close to the question becomes a starting page (question->section)
+TEXT_MIN = 0.54        # kb_search(similar_to=<text>) default floor
+INGEST_MIN = 0.61      # kb_ingest: pages like the source's slices
+PAGE_MIN = 0.69        # kb_search(similar_to=<page>) default floor
+TOPIC_MIN = 0.76       # after an edit or ingest: a section elsewhere about the same thing
+DUPLICATE_MIN = 0.91   # kb_write: an existing page very likely covers the new one
 
 PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 DEFAULT_AUTHOR = "claude/kb-mcp"
@@ -347,7 +354,7 @@ def register(mcp: FastMCP) -> None:
         concept_id: Annotated[str | None, Field(description="A page: find sections elsewhere about the same things as its sections")] = None,
         text: Annotated[str | None, Field(description="Or a text (a claim, a paragraph, a draft): where in the kb is this already covered?")] = None,
         limit: Annotated[int, Field(ge=1, le=30)] = 10,
-        min_similarity: Annotated[float | None, Field(ge=0.0, le=1.0, description="Cosine similarity floor. Default 0.65 for a text (a short claim scores ~0.7 against the section that states it), 0.75 for a page")] = None,
+        min_similarity: Annotated[float | None, Field(ge=0.0, le=1.0, description=f"Cosine similarity floor. Default {TEXT_MIN} for a text, {PAGE_MIN} for a page")] = None,
         include_history: Annotated[bool, Field(description="Also return journal days, archive/ and sources/ (history; left out by default because they repeat old values)")] = False,
     ) -> dict:
         """Sections on other pages that are about the same thing as a page or a text, by
@@ -368,7 +375,7 @@ def register(mcp: FastMCP) -> None:
                 raise ToolError(f"no concept '{cid}'")
         if not await _run(embed.available):
             return {"similar": [], "note": "embeddings are unavailable right now; use kb_search"}
-        floor = min_similarity if min_similarity is not None else (0.65 if text else 0.75)
+        floor = min_similarity if min_similarity is not None else (TEXT_MIN if text else PAGE_MIN)
         hits = await _run(embed.similar, me.dir, docs, cid, [("text", text)] if text else None, limit * 3, floor)   # history is filtered below
         mine_links = set(okf.links(cid, by_id[cid][1])) if cid else set()
         out = []
@@ -441,7 +448,7 @@ def register(mcp: FastMCP) -> None:
         # they use other words. Sources and journal days are left out: they aren't where facts go.
         slices = [(f"source part {i + 1}", content[i * 1500:(i + 1) * 1500]) for i in range(min(4, (len(content) + 1499) // 1500))]
         have = {t["id"] for t in touched}
-        for c, sim, their, _ in await _run(embed.similar, me.dir, docs, sid, [(f"{title}", title), *slices], 10, TOPIC_MIN - 0.1):
+        for c, sim, their, _ in await _run(embed.similar, me.dir, docs, sid, [(f"{title}", title), *slices], 10, INGEST_MIN):
             if c in have:
                 next(t for t in touched if t["id"] == c)["found_by"] = "both"
             elif c in by_id and not c.startswith(("sources/", "journal/")) and len(touched) < 15:
@@ -589,8 +596,8 @@ def register(mcp: FastMCP) -> None:
         if existed:
             extra_out = await _run(_check_also, me.dir, cid, old_meta, old_body, meta, body, docs)
         else:   # a new page: the closest existing pages by meaning (titles are checked by the guard).
-            # A reworded duplicate scores about like a related page (~0.84 vs ~0.85 on this kb), so
-            # list them for the writer to judge; at DUPLICATE_MIN and above it's very likely the same.
+            # A reworded duplicate can score about like a related page, so list them for the writer
+            # to judge; at DUPLICATE_MIN and above it's very likely the same.
             near = await _run(embed.similar, me.dir, docs, cid, [("new page", f"{title}. {description}\n{body}")], 3, TOPIC_MIN)
             extra_out = {"closest_pages": [{"id": c, "section": h, "similarity": s,
                                             **({"likely_duplicate": True} if s >= DUPLICATE_MIN else {})} for c, s, h, _ in near],
@@ -887,7 +894,7 @@ def register(mcp: FastMCP) -> None:
         status: Annotated[Literal["draft", "stable", "deprecated"] | None, Field(description="Keywords: only this status")] = None,
         limit: Annotated[int, Field(ge=1, le=50)] = 10,
         include_sources: Annotated[bool, Field(description="Keywords: also search raw sources in sources/")] = False,
-        min_similarity: Annotated[float | None, Field(ge=0.0, le=1.0, description="Meaning: floor (default 0.65 for a text, 0.75 for a page; below ~0.70 is weak evidence)")] = None,
+        min_similarity: Annotated[float | None, Field(ge=0.0, le=1.0, description=f"Meaning: floor (default {TEXT_MIN} for a text, {PAGE_MIN} for a page)")] = None,
         include_history: Annotated[bool, Field(description="Meaning: also journal days, archive/ and sources/")] = False,
     ) -> dict:
         """Find pages. With `query`: keyword search for a specific fact or page, ranked by
@@ -902,8 +909,12 @@ def register(mcp: FastMCP) -> None:
         if query:
             return {"results": await _keyword_search(query, type, tag, status, limit, include_sources)}
         me = await _me()
-        is_page = "\n" not in similar_to and len(similar_to) < 200 and await _run(
-            lambda: Bundle(me).resolve(okf.normalize_id(similar_to)) is not None)
+        def _is_page() -> bool:   # anything that isn't a valid, existing page ID is a text
+            try:
+                return Bundle(me).resolve(okf.normalize_id(similar_to)) is not None
+            except okf.ConceptError:
+                return False
+        is_page = "\n" not in similar_to and len(similar_to) < 200 and await _run(_is_page)
         return await _similar(similar_to if is_page else None, None if is_page else similar_to,
                               min(limit, 30), min_similarity, include_history)
 

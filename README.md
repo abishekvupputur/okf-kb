@@ -8,8 +8,8 @@ Claude can read and write it) plus a small **web UI** to browse, review and answ
   Every change is a commit, so history, diffs and restore come for free.
 - Nothing is ever shared or published: every page needs a sign-in and each user only sees their own
   bundle.
-- Keyword search plus section embeddings (`bge-small-en-v1.5` via FastEmbed on ONNX Runtime, no
-  PyTorch), a relevance graph, a structure lint, and guards that refuse secrets and malformed pages.
+- Keyword search plus section embeddings (`stella-en-400M-v5`, MIT, via FastEmbed on ONNX Runtime,
+  no PyTorch; ~3 GB RAM while building the index), a relevance graph, a structure lint, and guards that refuse secrets and malformed pages.
 - Sign-in through any OIDC provider; the MCP OAuth flow for
   Claude's connector is handled by FastMCP's `OIDCProxy`.
 
@@ -28,6 +28,7 @@ docker run -d --name kb -p 8000:8000 -v kb-data:/data --env-file kb.env okf-kb
 | `OIDC_CONFIG_URL` | Your provider's `.well-known/openid-configuration` |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | A confidential OAuth2 client; redirect URIs `<PUBLIC_URL>/auth/callback` and `<PUBLIC_URL>/web/callback` |
 | `JWT_SIGNING_KEY` | Random string; signs the tokens handed to MCP clients and the web session cookie |
+| `KB_EMBED_THREADS` | Optional: CPU threads for embedding (default 1) |
 | `STORAGE_ENCRYPTION_KEY` | A Fernet key (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) encrypting stored client registrations |
 
 The provider must return `sub` and `email`, and should issue refresh tokens for `offline_access`

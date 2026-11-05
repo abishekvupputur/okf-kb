@@ -1,12 +1,17 @@
-"""Meaning-based layer of the kb: one embedding per page section (bge-small-en-v1.5 through
+"""Meaning-based layer of the kb: one embedding per page section (stella-en-400M-v5 through
 FastEmbed on ONNX Runtime, no PyTorch), used next to the keyword search, never instead of it.
+
+Model choice (2026-11-05): best of 18 runs on 40 paraphrased questions against a real bundle: the right
+page first for 35 of 40 and in the top 3 for all 40 (bge-small-en-v1.5, used before: 25 and 35).
 
 - Sections: a page's lead and each heading's own text, prefixed with the page title and heading,
   cut to CUT characters (shorter sections keep the memory peak down: measured peak ~390 MB for a
   full build of ~150 pages).
 - Vectors are kept per user in /data/embeddings/<user>.npz, keyed by a hash of the section text,
   so a restart re-embeds nothing and a write re-embeds only the sections it changed.
-- CPU: one ONNX thread, and the embedding work runs at low priority (nice). Slow is fine.
+- CPU: KB_EMBED_THREADS ONNX threads (default 1), and the embedding work runs at low priority (nice).
+- Questions get the model's retrieval instruction (QUERY_PREFIX); sections and texts compared with
+  sections are embedded as they are.
 - If FastEmbed or the model is unavailable, `available()` is False and callers use keywords only.
 """
 
@@ -22,7 +27,10 @@ import numpy as np
 
 from .store import DATA
 
-MODEL = "BAAI/bge-small-en-v1.5"
+MODEL = "Qdrant/stella-en-400M-v5-doc-onnx"   # MIT; one model for questions and sections
+DIM = 1024
+QUERY_PREFIX = "Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
+THREADS = int(os.environ.get("KB_EMBED_THREADS", "1"))
 MODEL_DIR = os.environ.get("KB_MODELS", "/srv/models")   # baked into the image (Dockerfile)
 INDEX_DIR = DATA / "embeddings"
 CUT = int(os.environ.get("KB_EMBED_CUT", "1000"))
@@ -44,7 +52,7 @@ def _load_model():
             import onnxruntime
             onnxruntime.disable_telemetry_events()   # no usage telemetry from this box
             from fastembed import TextEmbedding
-            _model = TextEmbedding(MODEL, cache_dir=MODEL_DIR, threads=1)
+            _model = TextEmbedding(MODEL, cache_dir=MODEL_DIR, threads=THREADS)
         except Exception as e:   # missing package or model: keyword search keeps working
             _failed = True
             log.error("embeddings unavailable, keyword search only: %s", e)
@@ -120,7 +128,7 @@ def _ensure(user_dir: str, docs, max_new: int | None = None) -> dict | None:
     idx = _index.get(user_dir)
     if idx is None:
         path = INDEX_DIR / f"{user_dir}.npz"
-        idx = {"keys": [], "vecs": np.zeros((0, 384), np.float32)}
+        idx = {"keys": [], "vecs": np.zeros((0, DIM), np.float32)}
         if path.exists():
             try:
                 z = np.load(path, allow_pickle=False)
@@ -147,7 +155,7 @@ def _ensure(user_dir: str, docs, max_new: int | None = None) -> dict | None:
             log.info("embedded %d sections for %s", len(missing), user_dir)
             _trim()
         vecs = np.stack([new_vecs[k] if k in new_vecs else idx["vecs"][have[k]] for k in keys]) if keys \
-            else np.zeros((0, 384), np.float32)
+            else np.zeros((0, DIM), np.float32)
         vecs /= np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
         idx = {"keys": keys, "vecs": vecs, "labels": labels}
         if vectors_changed:
@@ -170,7 +178,7 @@ def rank(user_dir: str, docs, query: str, limit: int = 20) -> list[tuple[str, fl
         idx = _ensure(user_dir, docs, max_new=QUERY_MAX_NEW)
         if idx is None or not len(idx["keys"]):
             return []
-        q = np.asarray(next(iter(_model.query_embed([query]))), np.float32)
+        q = np.asarray(next(iter(_model.query_embed([QUERY_PREFIX + query]))), np.float32)
     finally:
         _lock.release()
     return _best_per_page(idx, idx["vecs"] @ (q / max(np.linalg.norm(q), 1e-9)), limit)

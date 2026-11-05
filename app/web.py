@@ -5,7 +5,8 @@
   /c/<id>.md         raw markdown
   /h/<id>[?from=r]   the page's change history, and what changed between revision r and now
   /history           every change in your bundle (your own git repository)
-  /search?q=        full search results (the top bar also searches live via /search.json)
+  /search?q=        full search results: keywords, then pages by meaning (embeddings); the top bar
+                     searches live by keyword via /search.json
   /graph             link graph of your pages
   /export.tar.gz     your bundle with its git history (owner only), as a .tar.gz
   /healthz           liveness, no login
@@ -41,7 +42,8 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Plain
                                  Response)
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from . import graph, guard, okf, search, store
+from . import embed, graph, guard, okf, search, store
+from .tools import SEED_MIN
 from .render import ago, esc, plain, render
 from .store import Bundle, User
 
@@ -725,7 +727,34 @@ async def _search(request: Request, user: User) -> Response:
                     for _, c, m, b in hits[:50])
     main = (f'<section class="block"><h1>Search</h1><p class="lead muted">{len(hits)} page{"s" * (len(hits) != 1)} for {esc(what)}</p>'
             f'{f"<ul class=rows>{items}</ul>" if items else "<p class=empty>Nothing matches. Try fewer or different words.</p>"}</section>')
+    if q and not tag:
+        main += await _meaning_results(user, docs, q, {c for _, c, _, _ in hits[:50]})
     return _page(f"Search {what}", main, user, q=q)
+
+
+async def _meaning_results(user: User, docs, q: str, shown: set[str]) -> str:
+    """Pages whose sections are about the question by meaning (embeddings, like kb_context's starting
+    pages), linked to the section that matched; pages already in the keyword results are left out."""
+    by_id = {c: (m, b) for c, m, b in docs}
+    ranked = await asyncio.to_thread(embed.rank, user.dir, docs, q, 15)
+    rows = []
+    for c, sim, heading in ranked:
+        if sim < SEED_MIN or c in shown or c not in by_id:
+            continue
+        meta, body = by_id[c]
+        anchor = next((slug for _, slug, text in render(c, body, lambda t: None, _title(c, meta))[1] if text in (heading, plain(heading).strip())), "") if heading else ""
+        where = f' · section <a href="/c/{esc(c)}#{esc(anchor)}">{esc(heading)}</a>' if anchor else (f" · section {esc(heading)}" if heading else "")
+        rows.append(f'<li><span class="grow"><a href="/c/{esc(c)}{f"#{esc(anchor)}" if anchor else ""}">{esc(_title(c, meta))}</a>'
+                    f'<small>{esc(meta.get("description") or plain(body)[:180])}{where}</small></span>'
+                    f'<span class="pill plain" title="similarity of the best-matching section">{sim:.2f}</span></li>')
+    if rows:
+        listing = f'<ul class="rows">{"".join(rows[:10])}</ul>'
+    elif embed.building():
+        listing = '<p class="empty">The meaning index is being built; only keyword results for now. Try again in a few minutes.</p>'
+    else:
+        listing = '<p class="empty">Nothing else is close in meaning.</p>'
+    return (f'<section class="block"><h2>By meaning</h2><p class="lead muted">Pages about the same thing in other words, '
+            f'linked to the section that matched.</p>{listing}</section>')
 
 
 async def _search_index(user: User) -> Response:
