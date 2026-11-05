@@ -34,6 +34,12 @@ INGEST_MIN = 0.61      # kb_ingest: pages like the source's slices
 PAGE_MIN = 0.69        # kb_search(similar_to=<page>) default floor
 TOPIC_MIN = 0.76       # after an edit or ingest: a section elsewhere about the same thing
 DUPLICATE_MIN = 0.91   # kb_write: an existing page very likely covers the new one
+# kb_context's "no evidence" gate and ranking (set 2026-11-05 on the 40 benchmark questions and 15 off-topic
+# ones: answerable questions' best section scored >= 0.471, off-topic ones <= 0.387).
+ABSTAIN_SIM = 0.43     # abstain when the best section is below this by meaning ...
+ABSTAIN_COV = 0.6      # ... and no page holds this share of the question's term weight (idf)
+SEM_LOW, SEM_FULL = 0.30, 0.65   # meaning similarity mapped onto 0..1 to rank it next to keyword coverage
+PAGE_SHARE = 0.35      # one page's share of the budget at most (at least 900 characters)
 
 PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 DEFAULT_AUTHOR = "claude/kb-mcp"
@@ -269,14 +275,22 @@ def register(mcp: FastMCP) -> None:
         if not include_sources:
             docs = [d for d in docs if d[1].get("type") != "Source"]
         alt = search.expand(terms)   # synonyms, half weight: seeds even when the question uses other words
-        hits = {c: s for c, m, body in docs if (s := search.score(c, m, body, terms, question, alt))}
-        # Starting pages by meaning too (related even without shared words). They always join the
-        # keyword seeds, ranked just behind the best keyword hit (0.95 for the closest), so neither
-        # kind drowns the other: common words can give dozens of weak keyword hits. Exact facts
-        # still come from keywords.
+        weights = await _run(search.idf, docs, terms + alt)   # rare terms count more
+        hits = {c: s for c, m, body in docs if (s := search.score(c, m, body, terms, question, alt, weights))}
+        cov = {c: search.coverage(c, by_id[c][0], by_id[c][1], terms, weights) for c in hits}
+        # Starting pages by meaning too (related even without shared words). Exact facts still come
+        # from keywords.
         allowed, by_keyword = {c for c, _, _ in docs}, set(hits)
-        ranked = [r for r in await _run(embed.rank, me.dir, docs, question, 10) if r[0] in allowed and r[1] >= SEED_MIN][:4]
-        sem = [(c, s) for c, s, _ in ranked]
+        ranked = [r for r in await _run(embed.rank, me.dir, docs, question, 10) if r[0] in allowed]
+        top_sim, best_cov = (ranked[0][1] if ranked else 0.0), max(cov.values(), default=0.0)
+        # No evidence: nothing is about the question by meaning and no page holds most of its rare
+        # words. Without it the best of many weak keyword hits came back as if it were an answer.
+        # Only when meaning search is ready (while the index builds, keywords alone can't tell).
+        if top_sim < ABSTAIN_SIM and best_cov < ABSTAIN_COV and await _run(embed.available) and not embed.building():
+            return {"question": question, "pages": [], "more": [], "no_evidence": True,
+                    "note": f"Nothing in the knowledge base is about this (best match by meaning {top_sim:.2f}, "
+                            f"best keyword coverage {best_cov:.0%}). Say the knowledge base has no answer, or try other words."}
+        sem = [(c, s) for c, s, _ in ranked if s >= SEED_MIN][:4]
         sem_heading = {c: h for c, _, h in ranked}
         by_meaning = [c for c, _ in sem]
         if not hits and not sem:
@@ -287,13 +301,15 @@ def register(mcp: FastMCP) -> None:
         for (a, b), e in edges.items():
             adj.setdefault(a, []).append((b, e["weight"]))
             adj.setdefault(b, []).append((a, e["weight"]))
-        top = max(hits.values(), default=1)
-        rank = {c: s / top for c, s in hits.items()}
+        # One scale for both methods: keyword pages by how much of the question they cover (frequency
+        # breaks ties), meaning pages by similarity mapped onto 0..1.
+        top = max(hits.values(), default=1) or 1
+        rank = {c: cov[c] * (0.5 + 0.5 * s / top) for c, s in hits.items()}
         for c, s in sem:
-            rank[c] = max(rank.get(c, 0), 0.95 * s / sem[0][1])
+            rank[c] = max(rank.get(c, 0), min(1.0, max(0.05, (s - SEM_LOW) / (SEM_FULL - SEM_LOW))))
             hits.setdefault(c, 0)
         via: dict[str, str] = {}
-        seeds = list(dict.fromkeys([*sorted(by_keyword, key=lambda c: -hits[c])[:5], *by_meaning]))
+        seeds = list(dict.fromkeys([*sorted(by_keyword, key=lambda c: -rank[c])[:5], *by_meaning]))
         frontier = {c: rank[c] for c in seeds}
         for decay in (0.5, 0.25):                       # two hops, decaying
             nxt: dict[str, float] = {}
@@ -305,16 +321,13 @@ def register(mcp: FastMCP) -> None:
                         nxt[n] = max(nxt.get(n, 0), gain)
                         via.setdefault(n, c)
             for n, g in nxt.items():
-                rank[n] = rank.get(n, 0) + g
+                # max, not sum: links bring in related pages, but a hub linked from several starting
+                # pages must not climb above the pages that actually match (it did: 9 of 14 misses).
+                rank[n] = max(rank.get(n, 0), g)
             frontier = nxt
-        # Interleave: keyword/graph result 1, meaning result 1, keyword/graph 2, meaning 2, … then the
-        # rest by score. Scores from the two methods aren't comparable (link boosts push keyword pages
-        # past 1), so each method is guaranteed its best pages a place within the budget.
-        by_score = sorted(rank, key=lambda c: -rank[c])
-        order = list(dict.fromkeys(
-            [c for pair in zip([c for c in by_score if c not in by_meaning], by_meaning) for c in pair] + by_score))
+        order = sorted(rank, key=lambda c: -rank[c])
         pages, more, left = [], [], budget_chars
-        page_cap = max(budget_chars * 0.4, 3000)
+        page_cap = max(budget_chars * PAGE_SHARE, 900)   # no page may crowd out the rest
         for c in order:
             meta, body = by_id[c]
             if left < 600:
@@ -324,11 +337,11 @@ def register(mcp: FastMCP) -> None:
             if len(body) <= cap:
                 text, partial = body, False
             else:
-                lead = guard.lead(body)[:1200]
+                lead = guard.lead(body)[:min(1200, int(cap))]
                 parts, used = [lead], len(lead)
                 # the section the meaning match came from first, then the keyword-matching ones
                 matched = [h for h in okf.sections(body) if h["heading"] == sem_heading.get(c)][:1]
-                for h in [*matched, *(h for _, h in search.section_scores(body, okf.sections(body), terms) if h not in matched)]:
+                for h in [*matched, *(h for _, h in search.section_scores(body, okf.sections(body), terms, weights) if h not in matched)]:
                     chunk = body[h["start"]:h["end"]]
                     if used + len(chunk) > cap:
                         continue
@@ -338,8 +351,9 @@ def register(mcp: FastMCP) -> None:
             left -= len(text)
             n = len(pages) + 1
             pages.append({"n": n, "id": c, "title": meta.get("title") or c, "trust": okf.trust_tier(meta),
-                          "stale": okf.is_stale(meta),
-                          "found_by": "search" if c in by_keyword else "meaning" if c in hits else f"related to {via.get(c)}",
+                          "stale": okf.is_stale(meta), **({"status": meta["status"]} if meta.get("status") not in (None, "stable") else {}),
+                          "found_by": ("both" if c in by_keyword and c in by_meaning else "search" if c in by_keyword
+                                       else "meaning" if c in by_meaning else f"related to {via.get(c)}"),
                           "score": round(rank[c], 2), **({"partial": True} if partial else {}), "text": text})
         return {"question": question, "cite_as": "[n] after a statement, n = page number below",
                 "pages": pages, "more": more[:15],

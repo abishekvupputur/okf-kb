@@ -5,7 +5,9 @@ terms appear (title strongest, then tags, description, ID/aliases, body), plus a
 the whole query appears in the title.
 """
 
+import math
 import re
+from functools import lru_cache
 
 STOP = set("""a an and are as at be but by can could did do does for from had has have how i if in into is it
 its me my no not of on or our should so than that the their them then there these they this to was we were
@@ -68,6 +70,7 @@ def removed_values(old: str, new: str) -> list[str]:
     `old` but no longer in `new`. Ordinary words are left out: they'd match everywhere."""
     gone = set(_VALUE.findall(old)) - set(_VALUE.findall(new))
     return sorted(t for t in gone if len(t) > 2 and t.lower() not in STOP
+                  and not re.fullmatch(r"[A-Z]{2,}s", t)   # plural acronyms (IDs, APIs, URLs) are ordinary words
                   and (any(c.isdigit() for c in t) or any(c in "._:/@-" for c in t) or any(c.isupper() for c in t[1:])))
 
 
@@ -78,32 +81,64 @@ def find_value(text: str, value: str) -> int:
     return m.start() if m else -1
 
 
-def score(cid: str, meta: dict, body: str, terms: list[str], phrase: str = "", alt: list[str] = ()) -> int:
-    """Terms count fully, `alt` (synonyms from expand) at half weight."""
-    return _score(cid, meta, body, terms, phrase) + _score(cid, meta, body, alt) // 2
+@lru_cache(maxsize=4096)
+def _word(term: str) -> re.Pattern:
+    # A term (a stem) must start a word: backup finds backups, point doesn't match inside endpoint.
+    return re.compile(rf"(?<![^\W_]){re.escape(term)}")
 
 
-def _score(cid: str, meta: dict, body: str, terms: list[str], phrase: str = "") -> int:
-    title = str(meta.get("title", "")).lower()
-    desc = str(meta.get("description", "")).lower()
-    tags = " ".join(meta.get("tags", [])).lower()
-    ids = " ".join([cid, *(meta.get("aliases") or [])])
-    box = " ".join(f"{k} {v}" for k, v in (meta.get("infobox") or {}).items()).lower()
-    low = body.lower()
-    s = sum(6 * (t in title) + 4 * (t in tags) + 3 * (t in desc) + 3 * (t in box) + 2 * (t in ids)
-            + min(low.count(t), 5) for t in terms)
+def count(text: str, term: str) -> int:
+    """How often `term` starts a word in `text` (lowercase)."""
+    return len(_word(term).findall(text))
+
+
+def _fields(cid: str, meta: dict, body: str) -> tuple[str, str, str, str, str, str]:
+    return (str(meta.get("title", "")).lower(), " ".join(meta.get("tags", [])).lower(),
+            str(meta.get("description", "")).lower(),
+            " ".join(f"{k} {v}" for k, v in (meta.get("infobox") or {}).items()).lower(),
+            " ".join([cid, *(meta.get("aliases") or [])]).lower(), body.lower())
+
+
+def idf(docs, terms: list[str]) -> dict[str, float]:
+    """Weight per term: rare terms count more (a term on no page gets the highest weight)."""
+    n = len(docs)
+    texts = [" ".join(_fields(c, m, b)) for c, m, b in docs]
+    return {t: math.log((n + 1) / (sum(1 for x in texts if count(x, t)) + 1)) + 1 for t in terms}
+
+
+def coverage(cid: str, meta: dict, body: str, terms: list[str], weights: dict[str, float]) -> float:
+    """Share of the question's term weight (idf) that the page contains, 0..1. Unlike score(), it is
+    absolute: a page holding only a common word of the question covers little of it."""
+    text = " ".join(_fields(cid, meta, body))
+    total = sum(weights.get(t, 1) for t in terms)
+    return sum(weights.get(t, 1) for t in terms if count(text, t)) / total if total else 0.0
+
+
+def score(cid: str, meta: dict, body: str, terms: list[str], phrase: str = "", alt: list[str] = (),
+          weights: dict[str, float] | None = None) -> float:
+    """Terms count fully, `alt` (synonyms from expand) at half weight; with `weights`, rare terms more."""
+    return _score(cid, meta, body, terms, phrase, weights) + _score(cid, meta, body, alt, "", weights) / 2
+
+
+def _score(cid: str, meta: dict, body: str, terms: list[str], phrase: str = "", weights: dict | None = None) -> float:
+    title, tags, desc, box, ids, low = _fields(cid, meta, body)
+    s = sum((weights or {}).get(t, 1) * (6 * bool(count(title, t)) + 4 * bool(count(tags, t)) + 3 * bool(count(desc, t))
+                                         + 3 * bool(count(box, t)) + 2 * bool(count(ids, t)) + min(count(low, t), 5))
+            for t in terms)
     if s and phrase and len(phrase) > 3 and phrase.lower() in title:
         s += TITLE_PHRASE_BONUS
     return s
 
 
-def section_scores(body: str, sections: list[dict], terms: list[str]) -> list[tuple[int, dict]]:
-    """Leaf sections ranked by how many term hits they hold (heading hits count double)."""
+def section_scores(body: str, sections: list[dict], terms: list[str],
+                   weights: dict[str, float] | None = None) -> list[tuple[float, dict]]:
+    """Leaf sections ranked by how many term hits they hold (heading hits count double; with
+    `weights`, rare terms more, so the section holding the question's specific word wins)."""
     leaves = [h for h in sections if not any(k["start"] > h["start"] and k["end"] <= h["end"] for k in sections)]
     out = []
     for h in leaves:
         text = body[h["start"]:h["end"]].lower()
-        s = sum(min(text.count(t), 5) + 2 * (t in h["heading"].lower()) for t in terms)
+        s = sum((weights or {}).get(t, 1) * (min(count(text, t), 5) + 2 * bool(count(h["heading"].lower(), t))) for t in terms)
         if s:
             out.append((s, h))
     return sorted(out, key=lambda x: -x[0])
