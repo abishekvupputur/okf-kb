@@ -12,6 +12,7 @@ Environment:
   STORAGE_ENCRYPTION_KEY     Fernet key encrypting stored client registrations/tokens
 """
 
+import logging
 import os
 
 import uvicorn
@@ -23,6 +24,10 @@ from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 from starlette.middleware import Middleware
 
 from . import embed, store, tools, web
+
+# The kb's own progress messages ("embedded 549 sections for <user>") at INFO; libraries stay at WARNING.
+logging.basicConfig(format="%(levelname)s: %(name)s: %(message)s")
+logging.getLogger("kb").setLevel(logging.INFO)
 
 
 class OfflineAccessProxy(OIDCProxy):
