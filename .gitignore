@@ -11,3 +11,6 @@ tests/
 bench*/
 *bench*.py
 benchmark*
+
+compose.yml
+.env
