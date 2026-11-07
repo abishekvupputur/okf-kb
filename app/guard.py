@@ -55,6 +55,9 @@ def _free(cid: str) -> bool:
 def placement(cid: str, meta: dict, exists) -> list[str]:
     """Where a concept may live. `exists(id)` tells whether a concept exists."""
     parts = cid.split("/")
+    if parts[0] == "journal":   # day logs made near-duplicate pages that crowded search (2026-11-06)
+        return ["day logs aren't kb pages: kb_ingest the day's log as a source (title '<system> change log "
+                "<date>') and put its facts on the topic pages."]
     if len(parts) == 1:
         return [] if meta.get("type") == "Portal" else [
             f"'{cid}' is at the root, which holds only portals (type Portal). File it under a portal, "

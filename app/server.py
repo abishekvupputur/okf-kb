@@ -98,8 +98,8 @@ HOW TO WRITE:
   A document worth keeping (release notes, spec, article, the user's pasted text): kb_ingest it
   first; it is stored unchanged in sources/ (the citation layer, left out of search unless asked)
   and returns the pages it touches. Then cite '/sources/<id>.md'.
-- Notable events: one dated line on the relevant journal day page (e.g. journal/garden/<date>;
-  create the day page and list it on its journal hub if it is a new day).
+- No journal or day-log pages: the facts go on the topic pages. A day's change log is raw material:
+  kb_ingest it as a source (title '<system> change log <date>') and cite it.
 - Questions only the user can answer go in a page's `review` field (shown on the kb home page).
   kb_review lists the user's answers under queue.answered_by_user: work each into its page, cite
   {resource: "answer from the user on <date> (kb web)", author: "human:<user>"}, then
@@ -124,7 +124,7 @@ def record_session() -> str:
             "fixed, diagnosed or learned about my systems, projects, configuration, accounts, people or plans, "
             "following the knowledge base's instructions: kb_search for each topic and for the old values, edit the "
             "affected pages in place with kb_update, create pages under the right hub only for genuinely new things, "
-            "add a dated line to today's journal page where a notable event happened, and file anything you are "
+            "and file anything you are "
             "unsure of as a `review` question instead of guessing. No secret values. Finish with kb_review, then list "
             "the pages you created or updated.")
 
