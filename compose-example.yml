@@ -1,0 +1,31 @@
+services:
+  kb:
+    container_name: kb
+    build: .
+    image: okf-kb:local
+    env_file: .env
+    # tini as PID 1 reaps the detached `git gc --auto` children that python never waits for
+    init: true
+    restart: unless-stopped
+    networks: [kb]
+    volumes:
+      - kb-data:/data
+    cpus: 8
+    mem_limit: 8g
+    memswap_limit: 8g
+    environment:
+      KB_EMBED_THREADS: "8"
+      #KB_EMBED_MODEL: embedding-model
+      #KB_RERANKER: rerank-model
+      KB_SYNONYMS: "oauth sso oidc;cloudflared tunnel"
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+volumes:
+  kb-data:
+    name: kb-data
+
+networks:
+  kb:
+    name: kb
