@@ -43,6 +43,9 @@ QUERY_PREFIX = "" if VOYAGE else \
     "Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
 THREADS = int(os.environ.get("KB_EMBED_THREADS", "1"))
 RERANKER = os.environ.get("KB_RERANKER", "")   # a FastEmbed cross-encoder for kb_context; empty: off
+# "rerank-3" etc.: Voyage AI's rerank API, reading whole pages (2026-11-06, live kb_context at 4000:
+# right first 58 -> 65 of 80 on questions sharing no words with their page; best section only: 52, worse)
+RERANK_WHOLE_PAGE = RERANKER.startswith("rerank-")
 MODEL_DIR = os.environ.get("KB_MODELS", "/srv/models")   # baked into the image (Dockerfile)
 INDEX_DIR = DATA / "embeddings"
 CUT = int(os.environ.get("KB_EMBED_CUT", "1000"))
@@ -131,6 +134,19 @@ def rerank(query: str, passages: list[str]) -> list[float] | None:
     if not RERANKER or not passages:
         return None
     try:
+        if RERANK_WHOLE_PAGE:   # Voyage AI rerank API (rerank-3 ...); passages are whole pages
+            req = urllib.request.Request("https://api.voyageai.com/v1/rerank", method="POST", data=json.dumps(
+                {"query": query, "documents": passages, "model": RERANKER}).encode(),
+                headers={"Authorization": f"Bearer {os.environ['VOYAGE_API_KEY']}", "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    data = json.load(r)["data"]
+            except urllib.error.HTTPError as e:
+                raise RuntimeError(f"Voyage rerank {e.code}") from None   # never echo the request (key)
+            scores = [0.0] * len(passages)
+            for d in data:
+                scores[d["index"]] = float(d["relevance_score"])
+            return scores
         with _rerank_lock:
             if _reranker is None:
                 from fastembed.rerank.cross_encoder import TextCrossEncoder

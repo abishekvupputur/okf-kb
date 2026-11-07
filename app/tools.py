@@ -343,6 +343,8 @@ def register(mcp: FastMCP) -> None:
         if embed.RERANKER and len(order) > 1:
             def passage(c):
                 meta, body = by_id[c]
+                if embed.RERANK_WHOLE_PAGE:
+                    return f"{meta.get('title') or c}. {meta.get('description', '')}\n{body}"[:12000]
                 secs = dict(embed.sections(c, meta, body))
                 kw = search.section_scores(body, okf.sections(body), terms, weights)
                 heading = sem_heading.get(c) or (kw[0][1]["heading"] if kw else "")
