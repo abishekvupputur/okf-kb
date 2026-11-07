@@ -46,7 +46,8 @@ if embed.MODEL == "voyage-context-4":
     SEED_MIN, TEXT_MIN, INGEST_MIN, PAGE_MIN, TOPIC_MIN, DUPLICATE_MIN = 0.181, 0.259, 0.348, 0.472, 0.653, 0.889
     ABSTAIN_SIM, SEM_LOW, SEM_FULL = 0.24, 0.106, 0.554
 PAGE_SHARE = 0.35      # one page's share of the budget at most (at least 900 characters)
-RERANK_TOP = 12        # kb_context: how many of the best candidate pages the reranker (KB_RERANKER) re-orders
+RERANK_TOP = 6         # kb_context: how many of the best candidate pages the reranker (KB_RERANKER) re-orders
+                       # (12 until 2026-11-06: whole pages made that ~20-36K rerank tokens per question)
 
 PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 DEFAULT_AUTHOR = "claude/kb-mcp"
