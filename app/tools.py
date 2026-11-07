@@ -39,6 +39,12 @@ DUPLICATE_MIN = 0.91   # kb_write: an existing page very likely covers the new o
 ABSTAIN_SIM = 0.43     # abstain when the best section is below this by meaning ...
 ABSTAIN_COV = 0.6      # ... and no page holds this share of the question's term weight (idf)
 SEM_LOW, SEM_FULL = 0.30, 0.65   # meaning similarity mapped onto 0..1 to rank it next to keyword coverage
+if embed.MODEL == "voyage-context-4":
+    # The values above mapped by quantile (2026-11-06; 521 sections, 80 questions + 15 off-topic; kit's
+    # map_thresholds.py). ABSTAIN_SIM 0.24 instead of the mapped 0.259: answerable questions' best section
+    # >= 0.291, off-topic <= 0.218; 0.24 lets 3 more questions that share no words with their page through.
+    SEED_MIN, TEXT_MIN, INGEST_MIN, PAGE_MIN, TOPIC_MIN, DUPLICATE_MIN = 0.181, 0.259, 0.348, 0.472, 0.653, 0.889
+    ABSTAIN_SIM, SEM_LOW, SEM_FULL = 0.24, 0.106, 0.554
 PAGE_SHARE = 0.35      # one page's share of the budget at most (at least 900 characters)
 RERANK_TOP = 12        # kb_context: how many of the best candidate pages the reranker (KB_RERANKER) re-orders
 

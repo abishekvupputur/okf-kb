@@ -13,22 +13,34 @@ page first for 35 of 40 and in the top 3 for all 40 (bge-small-en-v1.5, used bef
 - Questions get the model's retrieval instruction (QUERY_PREFIX); sections and texts compared with
   sections are embedded as they are.
 - If FastEmbed or the model is unavailable, `available()` is False and callers use keywords only.
+
+KB_EMBED_MODEL=voyage-context-4 (approved by the user 2026-11-06) uses Voyage AI's contextualized embeddings
+instead: a page's sections are embedded together, so each section's vector knows its page; any change to a
+page re-embeds the whole page (its keys include the page's text). Key: VOYAGE_API_KEY. If the API fails,
+that search uses keywords only. Benchmark: right page first for 64 of 80 questions that share no words with
+their page (stella: 51). tools.py carries the thresholds mapped for it.
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
 import ctypes
 import threading
+import time
+import urllib.error
+import urllib.request
 
 import numpy as np
 
 from .store import DATA
 
-MODEL = "Qdrant/stella-en-400M-v5-doc-onnx"   # MIT; one model for questions and sections
+MODEL = os.environ.get("KB_EMBED_MODEL", "Qdrant/stella-en-400M-v5-doc-onnx")   # stella: MIT, local
+VOYAGE = MODEL.startswith("voyage-")
 DIM = 1024
-QUERY_PREFIX = "Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
+QUERY_PREFIX = "" if VOYAGE else \
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
 THREADS = int(os.environ.get("KB_EMBED_THREADS", "1"))
 RERANKER = os.environ.get("KB_RERANKER", "")   # a FastEmbed cross-encoder for kb_context; empty: off
 MODEL_DIR = os.environ.get("KB_MODELS", "/srv/models")   # baked into the image (Dockerfile)
@@ -47,8 +59,55 @@ _reranker = None
 _rerank_lock = threading.Lock()      # user dir -> {"keys": [...], "vecs": ndarray, "labels": [(cid, heading)]}
 
 
+class _Voyage:
+    """Voyage AI contextualized embeddings with the FastEmbed calls embed.py uses, plus pages()."""
+    URL = "https://api.voyageai.com/v1/contextualizedembeddings"
+    MAX_CHARS = 60000   # per request, ~20K tokens (the API takes 32K without auto chunking)
+
+    def __init__(self, key: str):
+        self.key = key
+
+    def _call(self, inputs: list[list[str]], input_type: str, tries: int) -> list[list[list[float]]]:
+        req = urllib.request.Request(self.URL, method="POST", data=json.dumps(
+            {"inputs": inputs, "model": MODEL, "input_type": input_type}).encode(),
+            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
+        for attempt in range(tries):
+            try:
+                with urllib.request.urlopen(req, timeout=30 if input_type == "query" else 120) as r:
+                    data = sorted(json.load(r)["data"], key=lambda d: d["index"])
+                return [[c["embedding"] for c in sorted(d["data"], key=lambda c: c["index"])] for d in data]
+            except urllib.error.HTTPError as e:
+                if e.code not in (429, 500, 502, 503, 504) or attempt == tries - 1:
+                    raise RuntimeError(f"Voyage API {e.code}") from None   # never echo the request (key)
+                time.sleep(2 ** attempt)
+
+    def pages(self, pages: list[list[str]]) -> list[list[list[float]]]:
+        out, batch, size = [], [], 0
+        for p in pages + [None]:
+            n = sum(map(len, p)) if p else 0
+            if batch and (p is None or size + n > self.MAX_CHARS or len(batch) == 1000):
+                out += self._call(batch, "document", 5)
+                batch, size = [], 0
+            if p:
+                batch.append(p)
+                size += n
+        return out
+
+    def passage_embed(self, texts, batch_size=None):   # loose texts: each a one-section page
+        return [v[0] for v in self.pages([[t] for t in texts])]
+
+    def query_embed(self, queries):
+        return [v[0] for v in self._call([[q] for q in queries], "query", 2)]
+
+
 def _load_model():
     global _model, _failed
+    if _model is None and not _failed and VOYAGE:
+        if os.environ.get("VOYAGE_API_KEY"):
+            _model = _Voyage(os.environ["VOYAGE_API_KEY"])
+        else:
+            _failed = True
+            log.error("KB_EMBED_MODEL=%s but VOYAGE_API_KEY is not set: keyword search only", MODEL)
     if _model is None and not _failed:
         try:
             import onnxruntime
@@ -143,7 +202,13 @@ def _ensure(user_dir: str, docs, max_new: int | None = None) -> dict | None:
         return None
     wanted = [(cid, h, t) for cid, meta, body in docs if meta.get("type") != "Source"
               for h, t in sections(cid, meta, body)]
-    keys = [_key(t) for _, _, t in wanted]
+    if VOYAGE:   # a section's vector depends on its whole page: the key includes the page's text
+        page = {}
+        for c, _, t in wanted:
+            page[c] = page.get(c, "") + "\x00" + t
+        keys = [_key(f"{page[c]}\x01{t}") for c, _, t in wanted]
+    else:
+        keys = [_key(t) for _, _, t in wanted]
     idx = _index.get(user_dir)
     if idx is None:
         path = INDEX_DIR / f"{user_dir}.npz"
@@ -168,9 +233,18 @@ def _ensure(user_dir: str, docs, max_new: int | None = None) -> dict | None:
         new_vecs = {}
         if missing:
             _low_priority()
-            texts = [wanted[i][2] for i in missing]
-            for i, v in zip(missing, model.passage_embed(texts, batch_size=BATCH)):
-                new_vecs[keys[i]] = np.asarray(v, np.float32)
+            if VOYAGE:   # whole pages, in page order
+                groups: dict[str, list[int]] = {wanted[i][0]: [] for i in missing}
+                for i, (c, _, _) in enumerate(wanted):
+                    if c in groups:
+                        groups[c].append(i)
+                for g, vs in zip(groups.values(), model.pages([[wanted[i][2] for i in g] for g in groups.values()])):
+                    for i, v in zip(g, vs):
+                        new_vecs[keys[i]] = np.asarray(v, np.float32)
+            else:
+                texts = [wanted[i][2] for i in missing]
+                for i, v in zip(missing, model.passage_embed(texts, batch_size=BATCH)):
+                    new_vecs[keys[i]] = np.asarray(v, np.float32)
             log.info("embedded %d sections for %s", len(missing), user_dir)
             _trim()
         vecs = np.stack([new_vecs[k] if k in new_vecs else idx["vecs"][have[k]] for k in keys]) if keys \
@@ -198,6 +272,9 @@ def rank(user_dir: str, docs, query: str, limit: int = 20) -> list[tuple[str, fl
         if idx is None or not len(idx["keys"]):
             return []
         q = np.asarray(next(iter(_model.query_embed([QUERY_PREFIX + query]))), np.float32)
+    except Exception as e:   # API down or rate-limited: this search uses keywords only
+        log.error("embedding the question failed, keywords only: %s", e)
+        return []
     finally:
         _lock.release()
     return _best_per_page(idx, idx["vecs"] @ (q / max(np.linalg.norm(q), 1e-9)), limit)
@@ -220,6 +297,9 @@ def similar(user_dir: str, docs, cid: str | None = None, texts: list[tuple[str, 
             mine = [(label, np.asarray(v, np.float32)) for (label, _), v in zip(texts, vecs)]
         else:
             mine = [(h, idx["vecs"][i]) for i, (c, h) in enumerate(idx["labels"]) if c == cid]
+    except Exception as e:
+        log.error("embedding for similar() failed: %s", e)
+        return []
     finally:
         _lock.release()
     best: dict[str, tuple[float, str, str]] = {}
