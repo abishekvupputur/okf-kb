@@ -29,6 +29,7 @@ docker run -d --name kb -p 8000:8000 -v kb-data:/data --env-file kb.env okf-kb
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | A confidential OAuth2 client; redirect URIs `<PUBLIC_URL>/auth/callback` and `<PUBLIC_URL>/web/callback` |
 | `JWT_SIGNING_KEY` | Random string; signs the tokens handed to MCP clients and the web session cookie |
 | `KB_EMBED_THREADS` | Optional: CPU threads for embedding (default 1) |
+| `KB_SYNONYMS` | Optional: search synonym groups, `;` between groups, spaces between words, e.g. `sso oidc;backup snapshot` (default `sso oidc`) |
 | `STORAGE_ENCRYPTION_KEY` | A Fernet key (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) encrypting stored client registrations |
 
 The provider must return `sub` and `email`, and should issue refresh tokens for `offline_access`

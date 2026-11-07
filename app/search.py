@@ -6,6 +6,7 @@ the whole query appears in the title.
 """
 
 import math
+import os
 import re
 from functools import lru_cache
 
@@ -19,10 +20,9 @@ TITLE_PHRASE_BONUS = 10
 
 # Words the user may use for what the pages name differently. Each group's members find each
 # other at half weight (see expand/score), so a page using the exact word still ranks first.
-# Keep it short; single lowercase words, already stemmed forms are fine.
-SYNONYM_GROUPS = [
-    ["sso", "oidc"],
-]
+# Keep it short; single lowercase words, already stemmed forms are fine. Set per deployment in
+# KB_SYNONYMS: groups split by ";", words by spaces, e.g. "sso oidc;backup snapshot".
+SYNONYM_GROUPS = [g.lower().split() for g in os.environ.get("KB_SYNONYMS", "sso oidc").split(";") if g.split()]
 
 
 def stem(w: str) -> str:
