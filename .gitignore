@@ -3,3 +3,11 @@ __pycache__/
 .env
 *.env
 /data/
+
+# tests and benchmarks stay local
+test_*.py
+*_test.py
+tests/
+bench*/
+*bench*.py
+benchmark*

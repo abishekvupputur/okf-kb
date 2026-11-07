@@ -90,11 +90,3 @@ print(guard.check(b, cid, meta, body, old_body=old))   # raises GuardError on a 
 b.save(cid, meta, body, f"Update: [{meta['title']}](/{cid}.md)")
 EOF
 ```
-
-## Checks
-
-```sh
-python -m app.test_search                   # no dependencies beyond the code
-docker exec kb python -m app.test_embed
-docker exec kb python -m app.test_tools     # read-only, against the first bundle
-```
