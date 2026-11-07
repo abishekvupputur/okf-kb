@@ -308,9 +308,20 @@ def similar(user_dir: str, docs, cid: str | None = None, texts: list[tuple[str, 
         if idx is None or not len(idx["keys"]):
             return []
         if texts:
-            _low_priority()
-            vecs = _model.passage_embed([t[:CUT] for _, t in texts], batch_size=BATCH)
-            mine = [(label, np.asarray(v, np.float32)) for (label, _), v in zip(texts, vecs)]
+            # A text that is exactly one of the page's indexed sections (an edit within its first CUT
+            # characters) reuses that section's vector, which _ensure just computed with its page as
+            # context; only the others (windows deep in long sections) are embedded here.
+            page = next(((m, b) for c, m, b in docs if c == cid), None)
+            indexed = {}
+            if page:
+                rows = [i for i, (c, _) in enumerate(idx["labels"]) if c == cid]
+                indexed = {t: idx["vecs"][i] for i, (_, t) in zip(rows, sections(cid, *page))}
+            todo = [t[:CUT] for _, t in texts if t not in indexed]
+            if todo:
+                _low_priority()
+            fresh = iter(_model.passage_embed(todo, batch_size=BATCH) if todo else [])
+            mine = [(label, indexed[t] if t in indexed else np.asarray(next(fresh), np.float32))
+                    for label, t in texts]
         else:
             mine = [(h, idx["vecs"][i]) for i, (c, h) in enumerate(idx["labels"]) if c == cid]
     except Exception as e:
