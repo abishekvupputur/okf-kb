@@ -63,7 +63,9 @@ task, not a separate request.
 
 READ IT FIRST: before answering questions about the user's systems, servers, homelab, projects,
 repos, configuration, accounts, people or plans, look here.
-- A question: kb_context(question, budget_chars) returns numbered pages; cite them as [1], [2].
+- A question: START with kb_context(question): it matches by keywords and meaning and returns numbered
+  pages; cite them as [1], [2]. Raise budget_chars only if the answer isn't covered. Use kb_search
+  for an exact value, identifier or name, not instead of kb_context.
 - Navigating, progressively (don't load pages you don't need): kb_list() (overview + top level) →
   kb_list(folder) (one level) → kb_read(hub) (lead, infobox, outline, children) → kb_read(id,
   section=…). kb_search(query) finds a specific fact by keywords and names its section;

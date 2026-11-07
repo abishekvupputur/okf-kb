@@ -256,14 +256,19 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool
     async def kb_context(
         question: Annotated[str, Field(description="The question to answer from the knowledge base")],
-        budget_chars: Annotated[int, Field(ge=2000, le=200000, description="How much page text to return in total (≈4 chars per token). Start small; raise it if the answer isn't covered.")] = 16000,
+        budget_chars: Annotated[int, Field(ge=2000, le=200000, description="How much page text to return in total (≈4 chars per token). The default covers most questions; raise it (8000-16000) for broad questions or when the answer isn't covered.")] = 4000,
         include_sources: Annotated[bool, Field(description="Also draw on raw sources (sources/); by default they are only listed as citations to visit")] = False,
     ) -> dict:
-        """Gather what the knowledge base says about a question, within a budget: keyword
-        search picks seed pages, the relevance graph (links, parent/child, shared sources,
-        common neighbours) adds related pages two hops out with decay, and the best-ranked
-        pages fill the budget — whole when small, otherwise their lead plus the sections
-        that match. Pages are numbered: cite them as [1], [2] in your answer. Pages that
+        """The first tool for any question the knowledge base may answer: use it before
+        kb_search or kb_read. One call finds the right pages by keywords AND by meaning (so it
+        also finds pages worded differently from the question), follows their links, and
+        returns the relevant text within a budget, numbered for citing. Keyword search alone
+        misses paraphrases: in tests it put the right page first for 47 of 80 questions,
+        kb_context for 71. If it says `no_evidence`, the knowledge base has no answer.
+        How: keyword and meaning matches seed the pages, the relevance graph (links,
+        parent/child, shared sources, common neighbours) adds related pages two hops out with
+        decay, and the best-ranked pages fill the budget — whole when small, otherwise their
+        lead plus the sections that match. Pages are numbered: cite them as [1], [2] in your answer. Pages that
         didn't fit are listed under `more` for kb_read. Raw sources the pages cite are listed under
         `sources_cited`: open one with kb_read only to check a claim. A useful synthesis can
         be filed back with kb_write."""
@@ -929,8 +934,9 @@ def register(mcp: FastMCP) -> None:
         the hit. With `similar_to`: sections on other pages about the same thing by meaning,
         even without shared words (where a fact is already written, contradiction
         candidates, missing links via `linked`: false, duplicates); similarity means same
-        topic, not agreement, so read both. To answer a question from several pages, use
-        kb_context. Check `trust` and `stale` before relying on a result."""
+        topic, not agreement, so read both. To answer a question, use kb_context instead
+        (keywords and meaning together); kb_search is for an exact value, identifier or name,
+        or every page stating an old value. Check `trust` and `stale` before relying on a result."""
         if bool(query) == bool(similar_to):
             raise ToolError("pass either query (keywords) or similar_to (a page ID or a text)")
         if query:
