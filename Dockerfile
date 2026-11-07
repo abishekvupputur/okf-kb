@@ -15,7 +15,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding('Qdrant/stella
 ENV HF_HUB_OFFLINE=1
 COPY app ./app
 RUN useradd --system --uid 10002 kb && mkdir -p /data && chown kb /data
-# The base image's admin and packaging tools (apt, util-linux, perl, bash, ncurses, ???) carry most of
+# The base image's admin and packaging tools (apt, util-linux, perl, bash, ncurses, …) carry most of
 # Trivy's findings, usually with no fix released, and the app never runs them. Only the purge runs
 # after this, so they can go (dpkg's database stays consistent, Trivy still sees what is left).
 # git keeps working: the local commands kb uses are C; perl and curl only serve git's remote and
