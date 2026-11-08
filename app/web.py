@@ -52,7 +52,7 @@ CALLBACK = "/web/callback"
 SESSION_COOKIE, FLOW_COOKIE = "kb_session", "kb_login"
 SESSION_TTL = 8 * 3600
 # Cloudflare challenges library User-Agents from this server's IP.
-IDP_HEADERS = {"User-Agent": f"okf-kb/1.0 (+{PUBLIC_URL})"}
+IDP_HEADERS = {"User-Agent": f"okf-wiki-mcp/1.0 (+{PUBLIC_URL})"}
 STATIC = Path(__file__).parent / "static"
 # Asset URLs carry a content hash, so a deploy is never hidden behind a cached old copy.
 ASSET_VERSION = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(STATIC.rglob("*")) if p.is_file())).hexdigest()[:10]

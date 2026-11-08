@@ -100,7 +100,7 @@ class Bundle:
     # ── git ──────────────────────────────────────────────────────────────────
     def _git(self, *args: str, check: bool = True) -> str:
         env = {**os.environ, "GIT_AUTHOR_NAME": self.user.name, "GIT_AUTHOR_EMAIL": self.user.email,
-               "GIT_COMMITTER_NAME": "okf-kb", "GIT_COMMITTER_EMAIL": "okf-kb@localhost"}
+               "GIT_COMMITTER_NAME": "okf-wiki-mcp", "GIT_COMMITTER_EMAIL": "okf-wiki-mcp@localhost"}
         out = subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, text=True, env=env)
         if check and out.returncode != 0:
             raise RuntimeError(f"git {args[0]} failed: {out.stderr.strip()[:300]}")

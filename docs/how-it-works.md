@@ -1,6 +1,6 @@
 # How it works
 
-What happens inside okf-kb when Claude asks a question, writes a page or checks the bundle's
+What happens inside okf-wiki-mcp when Claude asks a question, writes a page or checks the bundle's
 health. Each diagram matches the code it names. Thresholds are the defaults for the local model
 (`stella-en-400M-v5`); `tools.py` holds the mapped values for `voyage-context-4`.
 

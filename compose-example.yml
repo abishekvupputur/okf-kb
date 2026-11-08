@@ -2,7 +2,7 @@ services:
   kb:
     container_name: kb
     build: .
-    image: okf-kb:local
+    image: okf-wiki-mcp:local
     env_file: .env
     # tini as PID 1 reaps the detached `git gc --auto` children that python never waits for
     init: true

@@ -1,4 +1,4 @@
-# okf-kb
+# okf-wiki-mcp
 
 **A self-hosted knowledge base that Claude keeps up to date for you.**
 
@@ -17,7 +17,7 @@ pages. Claude reads it before it answers and writes to it after it changes somet
 ## Why
 
 Chat assistants forget everything between sessions, and notes you keep by hand drift out of date.
-okf-kb gives Claude one place to look things up and a duty to keep it current:
+okf-wiki-mcp gives Claude one place to look things up and a duty to keep it current:
 
 - **Ask first.** "Which version of X runs on the NAS?" is answered from your pages, with numbered
   citations, instead of a guess.
@@ -50,7 +50,7 @@ The pages follow Google's [Open Knowledge Format](https://github.com/GoogleCloud
 flowchart LR
     C[Claude<br/>MCP connector] -- OAuth + MCP --> S
     B[Browser] -- OIDC login --> S
-    subgraph S[okf-kb container]
+    subgraph S[okf-wiki-mcp container]
         T[MCP tools] -- writes --> G[guardrails]
         G --> R[(bundle<br/>git repo per user)]
         T -- reads --> Q[search: keywords<br/>+ embeddings + graph]
@@ -73,9 +73,9 @@ facts. Each folder gets a generated `index.md`, and the root keeps a `log.md`.
 ## Quick start
 
 ```sh
-git clone https://github.com/abishekvupputur/okf-kb.git && cd okf-kb
-docker build -t okf-kb .
-docker run -d --name kb -p 8000:8000 -v kb-data:/data --env-file kb.env okf-kb
+git clone https://github.com/abishekvupputur/okf-wiki-mcp.git && cd okf-wiki-mcp
+docker build -t okf-wiki-mcp .
+docker run -d --name kb -p 8000:8000 -v kb-data:/data --env-file kb.env okf-wiki-mcp
 ```
 
 Put it behind HTTPS (a reverse proxy or a tunnel), then in Claude go to
@@ -102,7 +102,7 @@ Optional:
 | `KB_CHANGELOG_DAYS` | `90` | How long change-log sources are kept before pruning |
 
 Your OIDC provider must return `sub` and `email`, and should issue refresh tokens for
-`offline_access`, otherwise Claude's connector drops when the access token expires. okf-kb asks for
+`offline_access`, otherwise Claude's connector drops when the access token expires. okf-wiki-mcp asks for
 `offline_access` itself. **Everyone who can sign in gets a bundle**, so limit access at the provider.
 
 ## Using it
