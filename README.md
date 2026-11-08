@@ -51,10 +51,11 @@ flowchart LR
     C[Claude<br/>MCP connector] -- OAuth + MCP --> S
     B[Browser] -- OIDC login --> S
     subgraph S[okf-kb container]
-        T[MCP tools] --> G[guardrails]
-        W[web UI] --> G
+        T[MCP tools] -- writes --> G[guardrails]
         G --> R[(bundle<br/>git repo per user)]
-        T --> Q[search: keywords<br/>+ embeddings + graph]
+        T -- reads --> Q[search: keywords<br/>+ embeddings + graph]
+        W[web UI] -- search --> Q
+        W -- "browse, mark reviewed,<br/>answer questions" --> R
         Q --> R
     end
     S -- sign-in --> P[OIDC provider]
