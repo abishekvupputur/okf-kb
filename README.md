@@ -12,6 +12,8 @@ pages. Claude reads it before it answers and writes to it after it changes somet
 ![OKF v0.2](https://img.shields.io/badge/OKF-v0.2-2E7D32)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
 
+![The relevance graph of a sample knowledge base: pages coloured by area, sized by connections](docs/screenshots/graph.png)
+
 ---
 
 ## Why
@@ -43,6 +45,17 @@ The pages follow Google's [Open Knowledge Format](https://github.com/GoogleCloud
 | **Web UI** | home dashboard, rendered pages, history with diffs, live search, an interactive link graph, `.tar.gz` export of your bundle |
 | **Multi-user or single-user** | sign-in through any OIDC provider, with a private bundle per user and nothing shared or published, or `KB_AUTH=none` for just you on localhost |
 | **Runs offline** | the default embedding model is baked into the image; no runtime downloads |
+
+## Screenshots
+
+A sample knowledge base about a fictional homelab.
+
+| | |
+|---|---|
+| ![Home: page count, questions Claude couldn't settle, portals and recent changes](docs/screenshots/home.png) | ![A hub page with its infobox, child pages and connections](docs/screenshots/page.png) |
+| **Home**: what needs your attention, the portals, and what changed last | **A page**: lead, infobox of key facts, child pages, sources and connections |
+| ![A page's history with a diff of a version bump](docs/screenshots/history.png) | ![Search: keyword matches, then pages related by meaning](docs/screenshots/search.png) |
+| **History**: every change is a git commit, diffed against any older version | **Search**: exact keyword matches first, then pages about the same thing in other words |
 
 ## How it works
 
