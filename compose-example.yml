@@ -1,23 +1,39 @@
+# Copy to compose.yml, fill in the settings below, put the secrets in .env (see .env.example),
+# then: docker compose up -d --build
 services:
   kb:
     container_name: kb
     build: .
     image: okf-wiki-mcp:local
-    env_file: .env
+    env_file: .env          # secrets only
     # tini as PID 1 reaps the detached `git gc --auto` children that python never waits for
     init: true
     restart: unless-stopped
     networks: [kb]
+    # Behind a reverse proxy or tunnel on the same Docker network, no port needs publishing.
+    # Otherwise publish it, on localhost only when KB_AUTH is none:
+    #ports: ["127.0.0.1:8000:8000"]
     volumes:
       - kb-data:/data
     cpus: 8
     mem_limit: 8g
     memswap_limit: 8g
     environment:
+      PUBLIC_URL: https://kb.example.com   # where Claude and the browser reach it
+
+      # Sign-in. oidc: everyone signs in through your provider and gets their own bundle.
+      # none: no sign-in, one user; anyone who reaches the port has full access.
+      KB_AUTH: oidc
+      #KB_USER: me                          # KB_AUTH=none: the bundle's name
+      OIDC_CONFIG_URL: https://idp.example.com/.well-known/openid-configuration
+      OIDC_CLIENT_ID: okf-wiki-mcp
+      OIDC_SCOPES: "openid profile email offline_access"   # drop offline_access if your provider refuses it
+
+      # Search
       KB_EMBED_THREADS: "8"
-      #KB_EMBED_MODEL: embedding-model
-      #KB_RERANKER: rerank-model
-      KB_SYNONYMS: "oauth sso oidc;cloudflared tunnel"
+      #KB_EMBED_MODEL: voyage-context-4     # Voyage AI instead of the local model (VOYAGE_API_KEY in .env)
+      #KB_RERANKER: rerank-3                # Voyage AI rerank for kb_context
+      KB_SYNONYMS: "oauth sso oidc;backup snapshot"
     logging:
       driver: json-file
       options: {max-size: 10m, max-file: "3"}

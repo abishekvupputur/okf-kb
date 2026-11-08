@@ -3,11 +3,15 @@
 Auth: OIDCProxy runs the MCP OAuth flow (dynamic client registration, PKCE,
 token exchange) in front of an OIDC provider; the caller's
 subject + email pick their bundle. The browser side (web.py) uses the same client.
+With KB_AUTH=none there is no sign-in at all: one local user, for a server only you can reach.
 
 Environment:
   PUBLIC_URL                 where this server is reached, e.g. https://kb.example.com
+  KB_AUTH                    oidc (default) or none
+  KB_USER                    KB_AUTH=none only: the bundle's name (default "me")
   OIDC_CONFIG_URL            the provider's .well-known/openid-configuration
   OIDC_CLIENT_ID / _SECRET   the OAuth2 client's credentials
+  OIDC_SCOPES                scopes asked for at login (default "openid profile email offline_access")
   JWT_SIGNING_KEY            signs the tokens this server hands to MCP clients (and web cookies)
   STORAGE_ENCRYPTION_KEY     Fernet key encrypting stored client registrations/tokens
 """
@@ -28,25 +32,34 @@ from . import embed, store, tools, web
 # The kb's own progress messages ("embedded 549 sections for <user>") at INFO; libraries stay at WARNING.
 logging.basicConfig(format="%(levelname)s: %(name)s: %(message)s")
 logging.getLogger("kb").setLevel(logging.INFO)
+log = logging.getLogger("kb")
+OIDC_SCOPES = store.OIDC_SCOPES
 
 
 class OfflineAccessProxy(OIDCProxy):
     """Some OIDC providers only issue refresh tokens for offline_access, which MCP clients don't
     ask for. Without one, Claude's token dies after an hour and the connector drops, so
-    ask for it upstream at login and on every refresh."""
+    ask for it upstream at login and on every refresh (when OIDC_SCOPES includes it)."""
 
     def _prepare_scopes_for_upstream_refresh(self, scopes: list[str]) -> list[str]:
-        return scopes if "offline_access" in scopes else [*scopes, "offline_access"]
+        if "offline_access" not in OIDC_SCOPES or "offline_access" in scopes:
+            return scopes
+        return [*scopes, "offline_access"]
 
 
-def build_auth() -> OfflineAccessProxy:
+def build_auth() -> OfflineAccessProxy | None:
+    if store.NO_AUTH:
+        log.warning("KB_AUTH=none: no sign-in, anyone who can reach this server can read and change the "
+                    "knowledge base. Keep it on localhost or a private network.")
+        return None
     return OfflineAccessProxy(
         config_url=os.environ["OIDC_CONFIG_URL"],
         client_id=os.environ["OIDC_CLIENT_ID"],
         client_secret=os.environ["OIDC_CLIENT_SECRET"],
         base_url=os.environ["PUBLIC_URL"],
-        required_scopes=["openid", "profile", "email"],
-        extra_authorize_params={"scope": "openid profile email offline_access"},
+        # tokens must carry the identity scopes; offline_access only matters to the provider
+        required_scopes=[s for s in OIDC_SCOPES if s != "offline_access"],
+        extra_authorize_params={"scope": " ".join(OIDC_SCOPES)},
         jwt_signing_key=os.environ["JWT_SIGNING_KEY"],
         client_storage=FernetEncryptionWrapper(
             key_value=DiskStore(directory="/data/oauth"),

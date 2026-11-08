@@ -41,7 +41,7 @@ The pages follow Google's [Open Knowledge Format](https://github.com/GoogleCloud
 | **Trust model** | Claude's writes are marked `generated`; only you can mark a page human-reviewed |
 | **Review queue** | Claude files questions it can't answer on the page; you answer them in the web UI and Claude works the answers in |
 | **Web UI** | home dashboard, rendered pages, history with diffs, live search, an interactive link graph, `.tar.gz` export of your bundle |
-| **Multi-user, private** | sign-in through any OIDC provider; each user gets their own bundle and nothing can be shared or published |
+| **Multi-user or single-user** | sign-in through any OIDC provider, with a private bundle per user and nothing shared or published, or `KB_AUTH=none` for just you on localhost |
 | **Runs offline** | the default embedding model is baked into the image; no runtime downloads |
 
 ## How it works
@@ -72,38 +72,57 @@ facts. Each folder gets a generated `index.md`, and the root keeps a `log.md`.
 
 ## Quick start
 
+**Just for you, on your own machine** (no sign-in):
+
 ```sh
 git clone https://github.com/abishekvupputur/okf-wiki-mcp.git && cd okf-wiki-mcp
 docker build -t okf-wiki-mcp .
-docker run -d --name kb -p 8000:8000 -v kb-data:/data --env-file kb.env okf-wiki-mcp
+docker run -d --name kb -p 127.0.0.1:8000:8000 -v kb-data:/data \
+  -e KB_AUTH=none -e PUBLIC_URL=http://127.0.0.1:8000 okf-wiki-mcp
+claude mcp add --transport http kb http://127.0.0.1:8000/mcp
 ```
 
-Put it behind HTTPS (a reverse proxy or a tunnel), then in Claude go to
-**Settings → Connectors → Add custom connector** and enter `<PUBLIC_URL>/mcp`.
+Open http://127.0.0.1:8000 for the web UI. With `KB_AUTH=none`, **anyone who can reach the port can
+read and change everything**, so keep it on localhost or a private network.
 
-### Configuration (`kb.env`)
+**With sign-in** (several people, or reachable from the internet): copy
+[`compose-example.yml`](compose-example.yml) to `compose.yml` and [`.env.example`](.env.example) to
+`.env`, fill them in, then `docker compose up -d --build`. Put it behind HTTPS (a reverse proxy or a
+tunnel), then in Claude go to **Settings → Connectors → Add custom connector** and enter
+`<PUBLIC_URL>/mcp`.
+
+### Configuration
+
+Settings go in `compose.yml` (`environment:`), and secrets go in `.env`.
 
 | Variable | |
 |---|---|
 | `PUBLIC_URL` | Where the server is reached, e.g. `https://kb.example.com` |
+| `KB_AUTH` | `oidc` (default): everyone signs in and gets their own bundle. `none`: no sign-in, one user |
+| `KB_USER` | `KB_AUTH=none` only: the bundle's name (default `me`) |
 | `OIDC_CONFIG_URL` | Your provider's `.well-known/openid-configuration` |
-| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | A confidential OAuth2 client with redirect URIs `<PUBLIC_URL>/auth/callback` and `<PUBLIC_URL>/web/callback` |
-| `JWT_SIGNING_KEY` | A random string; signs the tokens handed to MCP clients and the web session cookie |
-| `STORAGE_ENCRYPTION_KEY` | A Fernet key that encrypts stored client registrations:<br/>`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `OIDC_CLIENT_ID` | A confidential OAuth2 client with redirect URIs `<PUBLIC_URL>/auth/callback` and `<PUBLIC_URL>/web/callback` |
+| `OIDC_SCOPES` | Scopes asked for at sign-in (default `openid profile email offline_access`) |
+| `OIDC_CLIENT_SECRET` | *(.env)* the client's secret |
+| `JWT_SIGNING_KEY` | *(.env)* a random string; signs the tokens handed to MCP clients and the web session cookie |
+| `STORAGE_ENCRYPTION_KEY` | *(.env)* a Fernet key that encrypts stored client registrations:<br/>`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+
+The `OIDC_*`, `JWT_SIGNING_KEY` and `STORAGE_ENCRYPTION_KEY` settings are only needed with `KB_AUTH=oidc`.
 
 Optional:
 
 | Variable | Default | |
 |---|---|---|
-| `KB_EMBED_MODEL` | `Qdrant/stella-en-400M-v5-doc-onnx` | Local model (MIT, ONNX, no PyTorch). Set `voyage-context-4` to use Voyage AI's contextualized embeddings instead (needs `VOYAGE_API_KEY`; page text is sent to Voyage) |
+| `KB_EMBED_MODEL` | `Qdrant/stella-en-400M-v5-doc-onnx` | Local model (MIT, ONNX, no PyTorch). Set `voyage-context-4` to use Voyage AI's contextualized embeddings instead (needs `VOYAGE_API_KEY` in `.env`; page text is sent to Voyage) |
 | `KB_RERANKER` | off | A FastEmbed cross-encoder, or a Voyage AI rerank model such as `rerank-3` (needs `VOYAGE_API_KEY`), which re-orders `kb_context`'s top pages |
 | `KB_EMBED_THREADS` | `1` | CPU threads for embedding |
 | `KB_SYNONYMS` | `sso oidc` | Search synonym groups: `;` between groups, spaces between words, e.g. `sso oidc;backup snapshot` |
 | `KB_CHANGELOG_DAYS` | `90` | How long change-log sources are kept before pruning |
 
-Your OIDC provider must return `sub` and `email`, and should issue refresh tokens for
-`offline_access`, otherwise Claude's connector drops when the access token expires. okf-wiki-mcp asks for
-`offline_access` itself. **Everyone who can sign in gets a bundle**, so limit access at the provider.
+Your OIDC provider must return `sub` and `email`. It should issue refresh tokens for
+`offline_access`, otherwise Claude's connector drops when the access token expires, so keep
+`offline_access` in `OIDC_SCOPES` unless your provider refuses it. **Everyone who can sign in gets a
+bundle**, so limit access at the provider.
 
 ## Using it
 
@@ -133,7 +152,8 @@ UI (`/export.tar.gz`).
 
 ## Security
 
-- Every page needs a sign-in, and each user only ever sees their own bundle. There is no sharing.
+- With `KB_AUTH=oidc`, every page needs a sign-in and each user only ever sees their own bundle. There is no sharing.
+  `KB_AUTH=none` has no access control at all: keep it on localhost or a private network.
 - Writes that look like they contain a secret (API tokens, private keys, JWTs, `PASSWORD=…`) are
   refused. Store the key's name and where it lives, not its value.
 - The web UI sends a strict CSP (scripts from self only; sigma.js and graphology are vendored),

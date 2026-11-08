@@ -111,7 +111,7 @@ async def _login(next_path: str) -> Response:
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     resp = RedirectResponse(cfg["authorization_endpoint"] + "?" + urlencode({
         "response_type": "code", "client_id": os.environ["OIDC_CLIENT_ID"],
-        "redirect_uri": PUBLIC_URL + CALLBACK, "scope": "openid email profile", "state": state,
+        "redirect_uri": PUBLIC_URL + CALLBACK, "scope": " ".join(s for s in store.OIDC_SCOPES if s != "offline_access"), "state": state,
         "code_challenge": challenge, "code_challenge_method": "S256",
     }), status_code=302)
     _cookie(resp, FLOW_COOKIE, _sign({"state": state, "verifier": verifier, "next": _safe_next(next_path),
@@ -230,7 +230,7 @@ def _topbar(user: User | None, q: str = "") -> str:
   </form>
   <nav>
     <a href="/">Home</a><a href="/graph">Graph</a><a href="/history">History</a>
-    <span class="who">{esc(user.name.split()[0] if user.name else user.email)}</span><a href="/logout">Sign out</a>
+    <span class="who">{esc(user.name.split()[0] if user.name else user.email)}</span>{'' if store.NO_AUTH else '<a href="/logout">Sign out</a>'}
   </nav>
 </header>"""
 
@@ -457,12 +457,12 @@ async def _home(user: User) -> Response:
   {folder_groups or '<p class="empty">No pages yet.</p>'}
 </section>
 <section class="block" id="connect"><h2>Connect Claude</h2>
-  <p class="lead muted">Claude reads and writes these pages for you. Each person who signs in gets their own private set.</p>
+  <p class="lead muted">Claude reads and writes these pages for you. {'There is no sign-in: this server has one user.' if store.NO_AUTH else 'Each person who signs in gets their own private set.'}</p>
   <div class="cards">
     <div class="card"><h3>Claude (web, desktop, mobile)</h3>
-      <p>Settings → Connectors → <b>Add custom connector</b>. Paste the URL below, leave the OAuth fields empty, then Connect and sign in with Google.</p></div>
+      <p>Settings → Connectors → <b>Add custom connector</b>. Paste the URL below, leave the OAuth fields empty, then {'Connect.' if store.NO_AUTH else 'Connect and sign in.'}</p></div>
     <div class="card"><h3>Claude Code</h3>
-      <p><code>claude mcp add --transport http kb {esc(mcp)}</code>, then <code>/mcp</code> → kb → Authenticate.</p></div>
+      <p><code>claude mcp add --transport http kb {esc(mcp)}</code>{'' if store.NO_AUTH else ', then <code>/mcp</code> → kb → Authenticate'}.</p></div>
   </div>
   <div class="endpoint"><b>{esc(mcp)}</b> <button class="btn small" type="button" data-copy="{esc(mcp)}">Copy</button></div>
 </section>"""
@@ -913,10 +913,12 @@ class WebGate:
             return None   # MCP + OAuth endpoints
 
         if path == "/logout":
+            if store.NO_AUTH:
+                return RedirectResponse("/", status_code=302)
             resp = RedirectResponse((await _config()).get("end_session_endpoint") or "/", status_code=302)
             resp.delete_cookie(SESSION_COOKIE, path="/")
             return resp
-        user = _session_user(request)
+        user = await store.local_user() if store.NO_AUTH else _session_user(request)
         if user is None:
             return await _login(path + (f"?{request.url.query}" if request.url.query else "")) if method == "GET" \
                 else PlainTextResponse("signed out — reload the page", 401)

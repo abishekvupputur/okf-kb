@@ -22,6 +22,15 @@ from pathlib import Path
 from . import okf
 
 DATA = Path(os.environ.get("KB_DATA", "/data"))
+# KB_AUTH=oidc (default): everyone signs in through the OIDC provider and gets their own bundle.
+# KB_AUTH=none: no sign-in, one local user (bundle KB_USER); anyone who reaches the port has full access.
+AUTH = os.environ.get("KB_AUTH", "oidc").strip().lower()
+if AUTH not in ("oidc", "none"):
+    raise SystemExit(f"KB_AUTH must be 'oidc' or 'none', not {AUTH!r}")
+NO_AUTH = AUTH == "none"
+OIDC_SCOPES = os.environ.get("OIDC_SCOPES", "openid profile email offline_access").split()
+LOCAL_CLAIMS = {"sub": "local", "email": "local@localhost",
+                "preferred_username": os.environ.get("KB_USER", "me"), "name": os.environ.get("KB_USER", "me")}
 BUNDLES = DATA / "bundles"
 USERS_FILE = DATA / "users.json"
 _users_lock = asyncio.Lock()
@@ -77,6 +86,11 @@ async def user_for(claims: dict) -> User:
     user = User(sub=sub, dir=entry["dir"], email=email, name=name)
     await asyncio.to_thread(Bundle(user).ensure)
     return user
+
+
+async def local_user() -> User:
+    """The single user of KB_AUTH=none."""
+    return await user_for(LOCAL_CLAIMS)
 
 
 def user_by_dir(dir_name: str) -> User | None:

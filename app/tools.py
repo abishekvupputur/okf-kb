@@ -63,6 +63,8 @@ NAVIGATE = ("Drill down instead of reading everything: kb_list(folder) for one l
 
 
 async def _me() -> User:
+    if store.NO_AUTH:
+        return await store.local_user()
     token = get_access_token()
     if token is None:
         raise ToolError("not signed in")
