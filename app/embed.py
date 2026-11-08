@@ -14,7 +14,7 @@ page first for 35 of 40 and in the top 3 for all 40 (bge-small-en-v1.5, used bef
   sections are embedded as they are.
 - If FastEmbed or the model is unavailable, `available()` is False and callers use keywords only.
 
-KB_EMBED_MODEL=voyage-context-4 (approved by the user 2026-11-06) uses Voyage AI's contextualized embeddings
+KB_EMBED_MODEL=voyage-context-4 uses Voyage AI's contextualized embeddings
 instead: a page's sections are embedded together, so each section's vector knows its page; any change to a
 page re-embeds the whole page (its keys include the page's text). Key: VOYAGE_API_KEY. If the API fails,
 that search uses keywords only. Benchmark: right page first for 64 of 80 questions that share no words with
