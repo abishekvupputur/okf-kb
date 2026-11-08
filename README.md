@@ -61,6 +61,9 @@ flowchart LR
     S -- sign-in --> P[OIDC provider]
 ```
 
+**[How it works in detail →](docs/how-it-works.md)**: diagrams of keyword search, embeddings, the
+relevance graph and its hops, the `kb_context` pipeline, write checks, lint and gap analysis.
+
 A **bundle** is a git repository of markdown pages with YAML frontmatter. The root holds only
 **portals** (`infrastructure`, `projects`, …). Every other page sits under a portal or a **hub**,
 which is a page with the same ID as its folder: `projects/garden` is the hub of
