@@ -141,6 +141,10 @@ flowchart TD
     LINT --> L5["hubs not listing their children<br/>hubs without an infobox"]
     LINT --> L6["current pages linking to deprecated ones"]
     LINT --> L7["possible duplicates<br/>titles ≥ 80% alike"]
+    LINT --> L8["semantic_pairs: among each other's 3 nearest<br/>pages by meaning, not linked, not parent/child<br/>+ link_match (nearest page already linked)"]
+    L8 --> DEC{"link needed?"}
+    DEC -- yes --> LK["kb_update: link the first mention"]
+    DEC -- no --> DIS["kb_dismiss_pair(reason)<br/>.kb/no-link.json, fingerprint of both pages<br/>back as recheck when either changes"]
     QUEUE --> Q1["answered_by_user:<br/>answers from the web UI to work in"]
     QUEUE --> Q2["open review questions"]
     QUEUE --> Q3["stale (past stale_after) · drafts · unverified"]
@@ -154,7 +158,7 @@ flowchart LR
     subgraph Mechanical["Found by the server"]
         G1["missing link targets:<br/>pages linked to that don't exist yet"]
         G2["orphans and unlinked children:<br/>pages the structure doesn't reach"]
-        G3["similar_to=page, linked: false<br/>same topic, no link between them"]
+        G3["semantic_pairs (kb_review) and similar_to=page, linked: false<br/>same topic, no link between them; /pairs heatmap"]
         G4["uncited sources:<br/>ingested but used by no page"]
     end
     subgraph Judgement["Left to Claude reading the pages"]
@@ -165,6 +169,10 @@ flowchart LR
     Mechanical --> FIX["kb_update · kb_write · kb_move<br/>then kb_review again"]
     Judgement --> FIX
 ```
+
+Pages are compared by the mean of their section vectors, and sections are embedded without footnotes
+and link targets (`embed.scrub`), so pages don't look alike just because they cite or link the same
+things. The web UI's `/pairs` shows the whole page × page heatmap with links, open and dismissed pairs.
 
 The checks are mechanical on purpose: similarity says two sections are about the same topic, not
 that they agree, so deciding a contradiction always means reading both.

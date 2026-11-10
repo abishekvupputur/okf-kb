@@ -157,9 +157,26 @@ def rerank(query: str, passages: list[str]) -> list[float] | None:
         return None
 
 
+_FOOTDEF = re.compile(r"(?m)^\[\^[^\]]+\]:.*$")
+_FOOTREF = re.compile(r"\[\^[^\]]+\]")
+_MDLINK = re.compile(r"(!?)\[([^\]]*)\]\([^)]*\)")
+_MDPATH = re.compile(r"(?<![\w.])/(?:[\w-]+/)*[\w-]+\.md\b")
+
+
+def scrub(body: str) -> str:
+    """The prose of a body without what only points elsewhere: footnotes (citations) and link
+    targets (`[text](/x.md)` keeps `text`). Otherwise two pages look alike just because they link or
+    cite the same things, and pages that link each other look closer than their text is (measured
+    2026-11-10: linked pairs' mean cosine 0.76 raw vs 0.72 scrubbed)."""
+    body = _FOOTREF.sub("", _FOOTDEF.sub("", body))
+    return _MDPATH.sub("", _MDLINK.sub(lambda m: m.group(2), body))
+
+
 def sections(cid: str, meta: dict, body: str, cut: int | None = CUT) -> list[tuple[str, str]]:
     """(heading or '', text to embed) for the lead and every heading's own text, each prefixed
-    with the page title (and heading) and cut to `cut` characters (None: the whole text)."""
+    with the page title (and heading) and cut to `cut` characters (None: the whole text).
+    The body is scrubbed of footnotes and link targets first."""
+    body = scrub(body)
     title = str(meta.get("title") or cid)
     marks = [(m.start(), m.group(2).strip()) for m in re.finditer(r"(?m)^(#{1,6}) +(.+)$", body)]
     lead = body[:marks[0][0] if marks else len(body)]
@@ -339,6 +356,30 @@ def similar(user_dir: str, docs, cid: str | None = None, texts: list[tuple[str, 
                 best[c] = (s, h, my_heading)
     out = sorted(((c, round(s, 3), h, mh) for c, (s, h, mh) in best.items()), key=lambda x: -x[1])
     return out[:limit]
+
+
+def page_matrix(user_dir: str, docs, ids: list[str]) -> np.ndarray | None:
+    """Cosine similarity between whole pages (each page: the normalised mean of its section
+    vectors), in the order of `ids`. None while the index is being built or unavailable."""
+    if not _lock.acquire(timeout=5):
+        return None
+    try:
+        idx = _ensure(user_dir, docs, max_new=QUERY_MAX_NEW)
+    except Exception as e:
+        log.error("embedding for page_matrix() failed: %s", e)
+        return None
+    finally:
+        _lock.release()
+    if idx is None:
+        return None
+    rows: dict[str, list[int]] = {}
+    for i, (c, _) in enumerate(idx["labels"]):
+        rows.setdefault(c, []).append(i)
+    if any(c not in rows for c in ids):
+        return None
+    p = np.stack([idx["vecs"][rows[c]].mean(0) for c in ids])
+    p /= np.maximum(np.linalg.norm(p, axis=1, keepdims=True), 1e-9)
+    return p @ p.T
 
 
 def _best_per_page(idx, sims, limit):

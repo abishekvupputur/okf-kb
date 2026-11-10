@@ -18,7 +18,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 from pydantic import Field
 
-from . import embed, graph, guard, okf, search, store
+from . import embed, graph, guard, okf, pairs, search, store
 from .store import Bundle, User
 
 # Exact facts (search, identifiers, old values) are found by keywords; embeddings (embed.py) only
@@ -770,6 +770,32 @@ def register(mcp: FastMCP) -> None:
             rev = await _run(b.save, cid, meta, body, f"Verification: [{meta.get('title') or cid}](/{cid}.md) by {by}")
         return {"id": cid, "trust": okf.trust_tier(meta), "revision": rev}
 
+    @mcp.tool
+    async def kb_dismiss_pair(
+        page_a: str,
+        page_b: str,
+        reason: Annotated[str, Field(description="Why these two pages need no link, in one sentence")],
+        author: Annotated[str, Field(description="Your model, e.g. 'claude/opus-5.5'")] = DEFAULT_AUTHOR,
+    ) -> dict:
+        """Record that a pair from kb_review's `semantic_pairs` needs no link (close in meaning,
+        but neither refers to the other). The pair stays out of the lint until either page
+        changes; then it comes back as `recheck` with this reason."""
+        me = await _me()
+        a, b = okf.normalize_id(page_a), okf.normalize_id(page_b)
+        if a == b:
+            raise ToolError("two different pages are needed")
+        if not reason.strip():
+            raise ToolError("give the reason no link is needed")
+        bnd = Bundle(me)
+        async with store.lock(me):
+            ra, rb = await _run(bnd.resolve, a), await _run(bnd.resolve, b)
+            if not ra or not rb:
+                raise ToolError(f"no concept '{a if not ra else b}'")
+            docs = await _run(bnd.all)
+            await _run(pairs.record, bnd.root, docs, ra, rb, reason.strip(), author)
+            rev = await _run(bnd.commit, f"Decision: no link between {ra} and {rb}")
+        return {"pair": [ra, rb], "revision": rev, "until": "either page changes"}
+
     async def _review_queue(limit: Annotated[int, Field(ge=1, le=100)] = 30) -> dict:
         """What needs attention: the user's answers to review questions (`answered_by_user`: work
         each answer into its page with kb_update, then clear it with remove_fields=["answered"]),
@@ -837,10 +863,19 @@ def register(mcp: FastMCP) -> None:
             if difflib.SequenceMatcher(None, ta, tb).ratio() >= 0.8
             and re.sub(r"\d", "", ta) != re.sub(r"\d", "", tb)    # dated series (journal days) aren't duplicates
             and not (a.startswith("sources/") or b.startswith("sources/"))]   # nor a summary next to its source
+        pa = await _run(pairs.analyse, me.dir, Bundle(me).root, docs)
+        inside = lambda c: not folder or c == folder or c.startswith(folder + "/")
+        out["semantic_pairs"] = [p for p in (pa["candidates"] if pa else []) if inside(p["a"]) or inside(p["b"])]
         counts = {k: len(v) for k, v in out.items()}
         return {"checked": len(mine), "counts": counts, **{k: v[:limit] for k, v in out.items() if v},
+                **({"link_match": {**pa["match"], "pairs_dismissed": len(pa["dismissed"])}} if pa else
+                   {"semantic_pairs_note": "embeddings unavailable or still building; lint again later"}),
                 "also_check": "Read the pages above where needed for contradictions, superseded claims and "
-                              "topics that deserve their own page; fix with kb_update/kb_move, then lint again."}
+                              "topics that deserve their own page; fix with kb_update/kb_move, then lint again. "
+                              "semantic_pairs: pages among each other's nearest by meaning that don't link "
+                              "each other. Read both; if the first mention on one page refers to the other, "
+                              "link it (kb_update), otherwise record why no link is needed with "
+                              "kb_dismiss_pair. A `recheck` pair was dismissed before and a page changed since."}
 
     async def _history(concept_id: str | None = None, limit: Annotated[int, Field(ge=1, le=100)] = 20) -> list[dict]:
         """Change history (git) of one concept, or of the whole bundle if no ID is given."""
@@ -985,7 +1020,8 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Maintenance view. `lint`: the structure check (rule errors and warnings, broken
         links, orphans, hubs not listing children or without an infobox, links to deprecated
-        pages, possible duplicates). `queue`: the user's answers to apply
+        pages, possible duplicates, `semantic_pairs`: pages close in meaning that don't link
+        each other, with `link_match`). `queue`: the user's answers to apply
         (`answered_by_user`: work each into its page, then kb_update(id,
         remove_fields=["answered"])), open questions, stale pages and drafts. Contradictions
         and superseded claims still need reading (kb_search similar_to helps find them)."""

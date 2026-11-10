@@ -497,3 +497,16 @@ main.wrap:has(.graph-page) { max-width: none; padding-left: 24px; padding-right:
 .questions .question .btn { justify-self: start; }
 .questions .answered { margin: 10px 0 0; padding-left: 18px; }
 .questions-home h2 .count { font-size: .9rem; color: var(--muted); margin-left: 6px; }
+
+/* /pairs */
+.pair-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 16px 0 24px; }
+.pair-stats .panel { display: flex; flex-direction: column; gap: 4px; }
+.pair-stats b { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+.pairs-wrap { position: relative; overflow-x: auto; margin-bottom: 24px; }
+.pairs-wrap canvas { display: block; cursor: pointer; }
+.pairs-tip { position: absolute; pointer-events: none; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 10px; font-size: 13px; max-width: 320px; z-index: 2; }
+table.pairs { border-collapse: collapse; width: 100%; font-size: 14px; margin-bottom: 24px; }
+table.pairs th, table.pairs td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.pairs .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table-wrap { overflow-x: auto; }

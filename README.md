@@ -35,7 +35,7 @@ The pages follow Google's [Open Knowledge Format](https://github.com/GoogleCloud
 
 | | |
 |---|---|
-| **13 MCP tools** | read progressively (`kb_list` → `kb_read` → sections), answer with `kb_context`, write with `kb_write` / `kb_update`, plus move, delete, restore, history, ingest, verify and review |
+| **14 MCP tools** | read progressively (`kb_list` → `kb_read` → sections), answer with `kb_context`, write with `kb_write` / `kb_update`, plus move, delete, restore, history, ingest, verify, review and dismissing a semantic pair that needs no link |
 | **Search that finds paraphrases** | keyword search with stemming and synonyms for exact facts, section embeddings for meaning, a relevance graph that pulls in related pages, and an optional reranker |
 | **Git underneath** | one repository per user; every write is a commit with history, diffs and restore |
 | **Guardrails on every write** | structure rules (portals → hubs → pages), required lead, title, description and tags, a size limit, duplicate titles, secret detection, and a refusal to silently shrink pages |

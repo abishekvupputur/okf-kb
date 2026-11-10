@@ -8,6 +8,7 @@
   /search?q=        full search results: keywords, then pages by meaning (embeddings); the top bar
                      searches live by keyword via /search.json
   /graph             link graph of your pages
+  /pairs             heatmap of meaning similarity between pages vs their links (pairs.py)
   /export.tar.gz     your bundle with its git history (owner only), as a .tar.gz
   /healthz           liveness, no login
   /static/*          stylesheet + scripts
@@ -42,7 +43,7 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Plain
                                  Response)
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from . import embed, graph, guard, okf, search, store
+from . import embed, graph, guard, okf, pairs, search, store
 from .tools import SEED_MIN
 from .render import ago, esc, plain, render
 from .store import Bundle, User
@@ -229,7 +230,7 @@ def _topbar(user: User | None, q: str = "") -> str:
     <ol id="results" hidden></ol>
   </form>
   <nav>
-    <a href="/">Home</a><a href="/graph">Graph</a><a href="/history">History</a>
+    <a href="/">Home</a><a href="/graph">Graph</a><a href="/pairs">Pairs</a><a href="/history">History</a>
     <span class="who">{esc(user.name.split()[0] if user.name else user.email)}</span>{'' if store.NO_AUTH else '<a href="/logout">Sign out</a>'}
   </nav>
 </header>"""
@@ -846,6 +847,64 @@ async def _graph_json(user: User) -> Response:
                         headers={"Cache-Control": "no-store"})
 
 
+async def _pairs_data(user: User) -> tuple[dict | None, dict]:
+    b = Bundle(user)
+    docs = await asyncio.to_thread(b.all)
+    return await asyncio.to_thread(pairs.analyse, user.dir, b.root, docs), {c: m for c, m, _ in docs}
+
+
+async def _pairs_json(user: User) -> Response:
+    pa, known = await _pairs_data(user)
+    if pa is None:
+        return JSONResponse({"building": True})
+    ix = {c: i for i, c in enumerate(pa["ids"])}
+    return JSONResponse({
+        "ids": pa["ids"], "titles": [_title(c, known[c]) for c in pa["ids"]],
+        "cos": [[round(float(v), 3) for v in row] for row in pa["matrix"]],
+        "linked": [[ix[a], ix[b]] for a, b in (k.split("|") for k in pa["linked"])],
+        "candidates": [[ix[p["a"]], ix[p["b"]]] for p in pa["candidates"]],
+        "dismissed": [[ix[p["a"]], ix[p["b"]]] for p in pa["dismissed"]]})
+
+
+async def _pairs_page(user: User) -> Response:
+    pa, known = await _pairs_data(user)
+    if pa is None:
+        return _message("Pairs", "Embeddings are unavailable or still being built. Try again in a minute.", user)
+    m = pa["match"]
+    pct = lambda v: "–" if v is None else f"{v:.0%}"
+    link = lambda c: f'<a href="/c/{esc(c)}">{esc(_title(c, known[c]))}</a>'
+    def rows(items, extra):
+        return "".join(f'<tr><td class="num">{p["similarity"]:.2f}</td><td>{link(p["a"])}</td><td>{link(p["b"])}</td>'
+                       f'<td>{extra(p)}</td></tr>' for p in items) or \
+            '<tr><td colspan="4" class="muted">None.</td></tr>'
+    cand = rows(pa["candidates"], lambda p: esc(f'was dismissed: {p["recheck"]["reason"]}') if p.get("recheck") else "")
+    dism = rows(pa["dismissed"], lambda p: esc(p.get("reason") or ""))
+    head = '<thead><tr><th class="num">cos</th><th>Page</th><th>Page</th><th>Note</th></tr></thead>'
+    main = f"""<section class="block graph-page pairs-page"><h1>Pairs</h1>
+<p class="lead muted">How closely pages are related by meaning, and whether they link each other. Text is compared
+without footnotes and link targets, so pages don't look alike just because they cite or link the same things.</p>
+<div class="pair-stats">
+  <div class="panel"><span class="muted">Nearest page already linked</span><b>{pct(m["nearest_linked"])}</b></div>
+  <div class="panel"><span class="muted">Of the {pairs.K} nearest, linked</span><b>{pct(m[f"top{pairs.K}_linked"])}</b></div>
+  <div class="panel"><span class="muted">A random pair is linked</span><b>{pct(m["random_pair_linked"])}</b></div>
+  <div class="panel"><span class="muted">Open pairs / dismissed</span><b>{len(pa["candidates"])} / {len(pa["dismissed"])}</b></div>
+</div>
+<h2>Every page against every page</h2>
+<p class="muted">Sorted by path, so each area is a block on the diagonal. Brighter is closer. Ringed: linked.
+Amber square: open pair (close, not linked). Cross: dismissed (no link needed). Hover a cell for the pages; click to open one.</p>
+<div class="pairs-wrap"><canvas id="pairs-map" role="img" aria-label="Heatmap of meaning similarity between all pages"></canvas>
+<div id="pairs-tip" class="pairs-tip" hidden></div></div>
+<h2>Open pairs</h2>
+<p class="muted">Among each other's {pairs.K} nearest pages by meaning, not linked either way, not parent and child.
+The weekly lint links them or records why no link is needed.</p>
+<div class="table-wrap"><table class="pairs">{head}<tbody>{cand}</tbody></table></div>
+<h2>Dismissed</h2>
+<p class="muted">Judged as needing no link. A pair comes back when either page changes.</p>
+<div class="table-wrap"><table class="pairs">{head}<tbody>{dism}</tbody></table></div>
+</section>"""
+    return _page("Pairs", main, user, scripts=f'<script src="/static/pairs.js?v={ASSET_VERSION}" defer></script>')
+
+
 VENDOR = ("graphology.umd.min.js", "graphology-library.min.js", "sigma.min.js")
 
 
@@ -899,11 +958,12 @@ class WebGate:
             return PlainTextResponse("ok")
         if path == CALLBACK:
             return await _callback(request)
-        if path in ("/static/style.css", "/static/kb.js", "/static/graph.js", "/static/icon-32.png", "/static/icon-180.png"):
+        if path in ("/static/style.css", "/static/kb.js", "/static/graph.js", "/static/pairs.js",
+                    "/static/icon-32.png", "/static/icon-180.png"):
             return FileResponse(STATIC / path.rsplit("/", 1)[1], headers={"Cache-Control": "max-age=31536000, immutable"})
         if path.startswith("/static/vendor/") and path.rsplit("/", 1)[1] in VENDOR:
             return FileResponse(STATIC / "vendor" / path.rsplit("/", 1)[1], headers={"Cache-Control": "max-age=31536000, immutable"})
-        browser_paths = path in ("/", "/graph", "/graph.json", "/history", "/search", "/search.json",
+        browser_paths = path in ("/", "/graph", "/graph.json", "/pairs", "/pairs.json", "/history", "/search", "/search.json",
                                  "/export.tar.gz", "/logout") \
             or path.startswith(("/c/", "/h/"))
         if path == "/mcp" and method == "GET" and "authorization" not in request.headers \
@@ -946,6 +1006,10 @@ class WebGate:
             return _graph_page(user)
         if path == "/graph.json":
             return await _graph_json(user)
+        if path == "/pairs":
+            return await _pairs_page(user)
+        if path == "/pairs.json":
+            return await _pairs_json(user)
         if path == "/export.tar.gz":
             async with store.lock(user):   # a consistent snapshot of the files and .git
                 data = await asyncio.to_thread(Bundle(user).export_tar)
